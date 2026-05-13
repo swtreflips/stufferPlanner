@@ -1,0 +1,158 @@
+Flexgrid / Data Grid Recommendation for Stuffer Planner
+========================================================
+
+RECOMMENDATION: AG Grid Community
+----------------------------------
+
+AG Grid Community is the best fit for this project. Below is the comparison
+that led to this conclusion.
+
+
+1. AG Grid Community (RECOMMENDED)
+-----------------------------------
+Pros:
+  - Closest to a real Excel experience out of the box.
+  - Built-in sorting, filtering, column resizing, pinning, and cell editing.
+  - Handles thousands of rows with virtualized rendering.
+  - Large ecosystem and extensive documentation.
+  - Free and MIT-licensed (Community edition).
+  - First-class React wrapper (ag-grid-react).
+  - Cell editing support -- useful for the factory "Cargo Ready Date" column.
+  - Column types make it easy to format dates, numbers, etc.
+  - Row drag source API integrates well with external drag-and-drop (dnd-kit).
+
+Cons:
+  - Larger bundle size (~300-400 KB minified).
+  - Advanced features (Excel export, row grouping, server-side row model)
+    require the paid Enterprise license.
+  - Opinionated styling -- customizing the look requires overriding AG Grid
+    CSS variables or themes.
+
+Why it fits this project:
+  - The template CSV has mixed data types (dates as Excel serials, numbers,
+    text) that benefit from AG Grid's column type system.
+  - Factory users need to edit the Cargo Ready Date inline -- AG Grid's cell
+    editing is production-ready.
+  - Dragging rows out of the grid into container cards is supported via
+    AG Grid's row drag API, which pairs with dnd-kit.
+  - The dataset size (dozens to low hundreds of rows per plan) is well within
+    Community edition capabilities.
+
+
+2. TanStack Table (React Table v8)
+-----------------------------------
+Pros:
+  - Headless -- complete control over rendering and styling.
+  - Tiny bundle size (~15 KB).
+  - Works perfectly with Tailwind CSS since you write all the markup.
+  - Very flexible plugin architecture (sorting, filtering, pagination).
+
+Cons:
+  - You must build every UI element yourself: cell rendering, column headers,
+    resize handles, scroll virtualization, inline editing.
+  - No built-in drag support -- you'd wire dnd-kit into custom row components.
+  - Significantly more development time to reach feature parity with AG Grid.
+  - No built-in Excel-like feel; achieving it requires substantial custom work.
+
+Verdict: Great for lightweight tables, but too much custom work for a project
+that explicitly needs an "Excel-like" experience.
+
+
+3. MUI X DataGrid (Community / Pro)
+-------------------------------------
+Pros:
+  - Solid feature set: sorting, filtering, column pinning, editing.
+  - Good React integration.
+  - Community edition is free (MIT).
+
+Cons:
+  - Tightly coupled to Material UI -- using it with Tailwind CSS creates
+    styling conflicts and dual styling systems.
+  - Row drag-and-drop is a Pro/Premium feature (paid).
+  - Less flexible theming when you are NOT using MUI for the rest of the app.
+
+Verdict: Would be a strong choice if the app were built on MUI, but mixing
+MUI DataGrid with Tailwind CSS adds unnecessary friction.
+
+
+4. Glide Data Grid
+-------------------
+Pros:
+  - Canvas-based rendering -- extremely fast for very large datasets.
+  - Modern look out of the box.
+  - MIT licensed.
+
+Cons:
+  - Canvas rendering means you cannot use standard DOM-based drag-and-drop
+    (dnd-kit) on individual rows without workarounds.
+  - Smaller community and ecosystem.
+  - Less mature documentation.
+  - Cell editing support is more limited than AG Grid.
+
+Verdict: Overkill performance-wise for this dataset size, and the canvas
+approach conflicts with dnd-kit integration.
+
+
+5. Handsontable
+----------------
+Pros:
+  - The most Excel-like grid available -- formula support, copy/paste, etc.
+  - Very rich feature set.
+
+Cons:
+  - NOT free for commercial use. Requires a paid license.
+  - Heavy bundle size.
+  - React wrapper is less idiomatic than AG Grid's.
+  - Drag-and-drop to external targets is not a core feature.
+
+Verdict: Licensing cost rules it out for this project. Also heavier than
+needed.
+
+
+6. React Data Grid (Adazzle/react-data-grid)
+----------------------------------------------
+Pros:
+  - Lightweight and fast.
+  - Good cell editing support.
+  - MIT licensed.
+
+Cons:
+  - Smaller feature set than AG Grid (no built-in column filtering UI,
+    no column groups).
+  - Less active maintenance.
+  - Row drag to external targets requires custom implementation.
+
+Verdict: A viable lightweight alternative, but missing too many features
+that AG Grid provides for free.
+
+
+SUMMARY TABLE
+--------------
+Library              | Excel-like | dnd-kit compat | Tailwind fit | Free | Bundle
+---------------------|------------|----------------|--------------|------|--------
+AG Grid Community    | Excellent  | Good           | OK (themes)  | Yes  | Large
+TanStack Table       | DIY        | Excellent      | Excellent    | Yes  | Tiny
+MUI X DataGrid       | Good       | Limited (free) | Poor         | Yes* | Medium
+Glide Data Grid      | Good       | Poor (canvas)  | OK           | Yes  | Medium
+Handsontable         | Excellent  | Poor           | OK           | No   | Large
+React Data Grid      | Good       | Fair           | OK           | Yes  | Small
+
+* MUI X row drag requires paid Pro license.
+
+
+FINAL RECOMMENDATION
+---------------------
+Use AG Grid Community. It provides the best balance of:
+
+  1. Excel-like UX out of the box (critical for replacing the spreadsheet
+     workflow).
+  2. Inline cell editing (needed for factory Cargo Ready Date entry).
+  3. Workable integration with dnd-kit for drag-to-container functionality.
+  4. No licensing cost.
+
+The main trade-off is bundle size, which is acceptable for a planning tool
+that is not a public-facing marketing page. The time saved versus building
+a custom grid from TanStack Table is substantial.
+
+Install command:
+  npm install ag-grid-community ag-grid-react
