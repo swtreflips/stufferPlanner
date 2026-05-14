@@ -1,4 +1,5 @@
 import SplitPane from './SplitPane'
+import { useAuth } from '../../auth/AuthProvider'
 
 const containerPanelPlaceholder = (
   <div className="flex flex-col items-center justify-center h-full gap-3 text-navy-400">
@@ -35,6 +36,8 @@ const gridPanelPlaceholder = (
 )
 
 export default function AppLayout() {
+  const { role } = useAuth()
+
   return (
     <div className="h-screen w-screen flex flex-col bg-navy-50">
       <header className="flex items-center justify-between px-6 py-3 bg-navy-900 border-b border-navy-700">
@@ -46,9 +49,9 @@ export default function AppLayout() {
             Stuffer Planner
           </h1>
         </div>
-        <div className="text-xs font-mono text-navy-500 uppercase tracking-widest">
-          Phase 1
-        </div>
+        <span className="text-xs font-mono uppercase tracking-widest text-navy-300">
+          {role}
+        </span>
       </header>
       <SplitPane
         left={containerPanelPlaceholder}
