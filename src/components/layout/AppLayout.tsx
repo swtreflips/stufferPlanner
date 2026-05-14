@@ -1,6 +1,9 @@
+import { lazy, Suspense } from 'react'
 import SplitPane from './SplitPane'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
+
+const ShipmentGrid = lazy(() => import('../grid/ShipmentGrid'))
 
 const containerPanelPlaceholder = (
   <div className="flex flex-col items-center justify-center h-full gap-3 text-navy-400">
@@ -18,14 +21,11 @@ const containerPanelPlaceholder = (
   </div>
 )
 
-function DataPreview() {
-  const shipments = usePlannerStore((s) => s.shipments)
-  return (
-    <pre className="text-[11px] font-mono leading-relaxed p-4 overflow-auto h-full bg-navy-50 text-navy-800">
-      {JSON.stringify(shipments, null, 2)}
-    </pre>
-  )
-}
+const gridLoadingFallback = (
+  <div className="flex items-center justify-center h-full text-navy-400 text-xs font-mono uppercase tracking-widest">
+    Loading grid...
+  </div>
+)
 
 export default function AppLayout() {
   const { role } = useAuth()
@@ -53,7 +53,11 @@ export default function AppLayout() {
       </header>
       <SplitPane
         left={containerPanelPlaceholder}
-        right={<DataPreview />}
+        right={
+          <Suspense fallback={gridLoadingFallback}>
+            <ShipmentGrid />
+          </Suspense>
+        }
       />
     </div>
   )
