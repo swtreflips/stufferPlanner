@@ -1,5 +1,6 @@
 import SplitPane from './SplitPane'
 import { useAuth } from '../../auth/AuthProvider'
+import { usePlannerStore } from '../../store/plannerStore'
 
 const containerPanelPlaceholder = (
   <div className="flex flex-col items-center justify-center h-full gap-3 text-navy-400">
@@ -17,26 +18,18 @@ const containerPanelPlaceholder = (
   </div>
 )
 
-const gridPanelPlaceholder = (
-  <div className="flex flex-col items-center justify-center h-full gap-3 text-navy-400">
-    <div className="grid grid-cols-3 gap-1">
-      {Array.from({ length: 9 }, (_, i) => (
-        <div key={i} className="w-4 h-3 rounded-sm bg-navy-200" />
-      ))}
-    </div>
-    <div className="text-center">
-      <div className="text-sm font-semibold tracking-wide uppercase text-navy-500">
-        Shipment Grid
-      </div>
-      <div className="text-xs mt-1 text-navy-400">
-        Data grid will appear here
-      </div>
-    </div>
-  </div>
-)
+function DataPreview() {
+  const shipments = usePlannerStore((s) => s.shipments)
+  return (
+    <pre className="text-[11px] font-mono leading-relaxed p-4 overflow-auto h-full bg-navy-50 text-navy-800">
+      {JSON.stringify(shipments, null, 2)}
+    </pre>
+  )
+}
 
 export default function AppLayout() {
   const { role } = useAuth()
+  const shipmentCount = usePlannerStore((s) => s.shipments.length)
 
   return (
     <div className="h-screen w-screen flex flex-col bg-navy-50">
@@ -49,13 +42,18 @@ export default function AppLayout() {
             Stuffer Planner
           </h1>
         </div>
-        <span className="text-xs font-mono uppercase tracking-widest text-navy-300">
-          {role}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-navy-800 text-navy-300 border border-navy-700">
+            {shipmentCount} shipments
+          </span>
+          <span className="text-xs font-mono uppercase tracking-widest text-navy-300">
+            {role}
+          </span>
+        </div>
       </header>
       <SplitPane
         left={containerPanelPlaceholder}
-        right={gridPanelPlaceholder}
+        right={<DataPreview />}
       />
     </div>
   )
