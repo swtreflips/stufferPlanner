@@ -1,12 +1,12 @@
-import type { OpenPoItem, OpenPoStatusReport } from '../../types/openPoItem'
-import { sampleOpenPoStatusReport } from '../sampleData'
+import type { OpenPoItem } from '../../types/openPoItem'
+import { sampleOpenPoItems } from '../sampleData'
 import type { OpenPoRepo } from './types'
 
 export function createLocalOpenPoRepo(): OpenPoRepo {
-  let rows: OpenPoItem[] = sampleOpenPoStatusReport.map((r) => ({ ...r }))
+  let rows: OpenPoItem[] = sampleOpenPoItems.map((r) => ({ ...r }))
 
   return {
-    async fetchAll(): Promise<OpenPoStatusReport> {
+    async fetchAll(): Promise<OpenPoItem[]> {
       return rows.map((r) => ({ ...r }))
     },
     async updateCargoReady(id, isoDate) {

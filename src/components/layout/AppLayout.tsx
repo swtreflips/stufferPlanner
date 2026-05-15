@@ -29,7 +29,7 @@ const gridLoadingFallback = (
 
 export default function AppLayout() {
   const { role } = useAuth()
-  const openPoCount = usePlannerStore((s) => s.openPoStatusReport.length)
+  const openPoCount = usePlannerStore((s) => s.openPoItems.length)
 
   return (
     <div className="h-screen w-screen flex flex-col bg-navy-50">

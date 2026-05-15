@@ -1,4 +1,4 @@
-import type { OpenPoStatusReport } from '../types/openPoItem'
+import type { OpenPoItem } from '../types/openPoItem'
 import { excelSerialToISO } from '../utils/dateHelpers'
 
 interface SeedRow {
@@ -31,7 +31,7 @@ const seedRows: SeedRow[] = [
   { documentNumber: 'PO155176', lineId: 2, sku: 'LEVI-NK13613',  dateIssuedSerial: 46080, requestedShipBySerial: 46125, cargoReadySerial: 46128, quantityRemaining: 195, cbmPerCase: 0.0682, etdDays: 120, eta: '2026-06-19T00:00:00.000Z' },
 ]
 
-export const sampleOpenPoStatusReport: OpenPoStatusReport = seedRows.map((r) => ({
+export const sampleOpenPoItems: OpenPoItem[] = seedRows.map((r) => ({
   id: `${r.documentNumber}-${r.lineId}`,
   name: NAME,
   dateIssued: excelSerialToISO(r.dateIssuedSerial),

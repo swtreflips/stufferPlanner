@@ -242,7 +242,7 @@ Store shape:
 ```ts
 interface PlannerStore {
   // Source of truth (mutated only on data load and commit)
-  openPoStatusReport: OpenPoStatusReport
+  openPoItems: OpenPoItem[]
   containers: Container[]
 
   // UI state

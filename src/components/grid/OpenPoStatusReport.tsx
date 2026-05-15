@@ -31,7 +31,7 @@ const formatCbmCell = (params: { value: unknown }): string =>
   typeof params.value === 'number' ? params.value.toFixed(4) : ''
 
 export default function OpenPoStatusReport() {
-  const openPoStatusReport = usePlannerStore((s) => s.openPoStatusReport)
+  const openPoItems = usePlannerStore((s) => s.openPoItems)
 
   const columnDefs = useMemo<ColDef<OpenPoItem>[]>(
     () => [
@@ -96,7 +96,7 @@ export default function OpenPoStatusReport() {
   return (
     <div className="h-full w-full">
       <AgGridReact<OpenPoItem>
-        rowData={openPoStatusReport}
+        rowData={openPoItems}
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
         theme={stufferTheme}

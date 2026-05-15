@@ -17,5 +17,3 @@ export interface OpenPoItem {
   cbmTotal: number
   raw: Record<string, unknown>
 }
-
-export type OpenPoStatusReport = OpenPoItem[]

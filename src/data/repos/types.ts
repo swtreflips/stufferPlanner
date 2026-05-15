@@ -1,8 +1,8 @@
-import type { OpenPoStatusReport } from '../../types/openPoItem'
+import type { OpenPoItem } from '../../types/openPoItem'
 import type { Container } from '../../types/container'
 
 export interface OpenPoRepo {
-  fetchAll(): Promise<OpenPoStatusReport>
+  fetchAll(): Promise<OpenPoItem[]>
   updateCargoReady(id: string, isoDate: string): Promise<void>
 }
 
