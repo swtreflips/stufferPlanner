@@ -4,7 +4,9 @@ import AppLayout from './components/layout/AppLayout'
 
 function RoleRouter() {
   const { role } = useAuth()
-  return <Navigate to={role === 'admin' ? '/admin' : '/factory'} replace />
+  const dest =
+    role === 'admin' ? '/admin' : role === 'internal' ? '/internal' : '/factory'
+  return <Navigate to={dest} replace />
 }
 
 export default function App() {
@@ -14,6 +16,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<RoleRouter />} />
           <Route path="/admin" element={<AppLayout />} />
+          <Route path="/internal" element={<AppLayout />} />
           <Route path="/factory" element={<AppLayout />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

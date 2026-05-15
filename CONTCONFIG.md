@@ -20,6 +20,20 @@ see "Implications for CLAUDE.md" at the end).
 A container is a **vessel for proposals**. Configurations are **alternatives within
 that vessel**. Commit promotes one alternative to reality.
 
+### Container `cargoReady` is derived
+
+A container's effective Cargo Ready Date is **not stored** -- it is computed at
+runtime as `max(cargoReady)` across the rows allocated in the active configuration.
+This means the container's ready date updates live whenever:
+
+* A factory edits the Cargo Ready Date on one of its rows.
+* A user adds, removes, or resizes an allocation.
+* A user switches the active configuration on the container.
+
+The committed configuration (if any) provides the "real" ready date for shipping
+purposes; pre-commit configurations show a hypothetical ready date for planning.
+Same derivation, different scope.
+
 ### Worked example (from `stufferplannertemplate.csv`)
 
 The sample CSV's `Column1` field illustrates the concept. Two configurations are
@@ -69,7 +83,7 @@ deletes the allocation.
 
 ## Master Dataframe View Modes
 
-The master shipment grid (right panel) renders **derived** data. The underlying
+The master open PO status report (right panel) renders **derived** data. The underlying
 PO quantities are never mutated except by commit.
 
 **Mode 1 -- Hypothetical view (default during planning):**
@@ -143,7 +157,7 @@ export interface Container {
   id: string
   name: string
   type: '20GP' | '40GP' | '40HC' | '45HC'
-  destination: string                    // matches ShipmentRow.shipTo
+  destination: string                    // matches OpenPoItem.shipTo
   configurations: Configuration[]
   activeConfigId: string                  // which config is currently displayed
   committedConfigId: string | null        // null = no commit yet
@@ -154,7 +168,10 @@ export interface Configuration {
   id: string
   containerId: string
   name: string                            // "Config A", "Config B", ...
-  createdBy: string                       // user id (admin or factory)
+  createdBy: string                       // user id
+  factoryName: string | null              // siloing column: NULL for admin/internal
+                                          // configs; set to the factory name for
+                                          // factory-created configs. Drives RLS.
   createdAt: string                       // ISO timestamp
   committed: boolean
   committedAt: string | null
@@ -162,14 +179,59 @@ export interface Configuration {
 }
 
 export interface Allocation {
-  shipmentRowId: string
+  openPoItemId: string
   quantity: number                        // cases assigned in this configuration
 }
 ```
 
-The existing `ShipmentRow` does not need new fields. The `committedConsumed` value is
+The existing `OpenPoItem` does not need new fields. The `committedConsumed` value is
 derived at runtime by summing committed allocations across all containers for that
 row. This avoids a denormalized field that can drift out of sync.
+
+---
+
+## Visibility & RLS (Total Siloing)
+
+Factories must never see another factory's data -- proposed, committed, or
+otherwise. Each PO has exactly one factory owner, so RLS on the `open_po_items` table
+is the foundation of the silo; everything else cascades from it.
+
+| Table             | Siloing column                                                     | Factory RLS                                                                                       |
+|-------------------|--------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| `open_po_items`       | `name`                                                             | `SELECT` and `UPDATE` (only `cargoReady`, `cbmPerCase`, `cbmTotal`) where `name = my_factory_name` |
+| `configurations`  | `factory_name` (set at INSERT; `NULL` for admin/internal configs)  | `SELECT` and `INSERT` where `factory_name = my_factory_name`. No `UPDATE` (no commit privilege).  |
+| `allocations`     | inherited via `open_po_item_id -> open_po_items.name`              | `SELECT` and `INSERT` only via own open PO items **and** own configurations (transitive)          |
+
+Admin and Internal roles bypass these filters (full read/write).
+
+### How the cascade works
+
+* **Open PO items are the foundation.** A factory's session can only `SELECT` /
+  `UPDATE` rows where `name = my_factory_name`. Postgres rewrites every query.
+* **Allocations inherit automatically.** A factory `INSERT` on `allocations`
+  must reference an `open_po_item_id` -- the `open_po_items` RLS filter rejects any
+  reference to another factory's row. No extra policy needed beyond verifying
+  the parent configuration is also theirs.
+* **Configurations are explicitly tagged.** Internal/admin-created configs have
+  `factory_name = NULL` (invisible to factories). Factory-created configs have
+  `factory_name = my_factory_name` (visible only to that factory + internal/admin).
+  RLS `INSERT WITH CHECK` enforces that factories cannot spoof another factory's
+  name, and that internal/admin cannot accidentally tag a config with a factory
+  name.
+
+### Derived signal: `quantityRemaining` decreases without leakage
+
+When internal commits a configuration that consumes a factory's PO line, the
+factory sees their `quantityRemaining` go down without seeing the committed
+configuration that consumed it (the configuration has `factory_name = NULL` and
+is RLS-invisible to them). If a factory needs to know **why**, surface a per-row
+status like `"PO X line Y committed to a shipping plan"` -- never expose the
+contents of the winning configuration to the factory.
+
+This is the only point where derived information about another factory's
+activity could leak. The mitigation is to keep the status message generic
+("committed to a plan") rather than specific ("committed to Container Z with
+Factory B's lines").
 
 ---
 
@@ -180,7 +242,7 @@ Store shape:
 ```ts
 interface PlannerStore {
   // Source of truth (mutated only on data load and commit)
-  shipments: ShipmentRow[]
+  openPoStatusReport: OpenPoStatusReport
   containers: Container[]
 
   // UI state
@@ -207,7 +269,7 @@ selectCommittedConsumed(rowId): number
 selectDisplayedRemaining(rowId): number
 
 // Rows visible in the grid right now (hidden if displayedRemaining == 0)
-selectVisibleShipmentRows(): ShipmentRow[]
+selectVisibleOpenPoItems(): OpenPoItem[]
 
 // Whether a configuration is over-allocated (impossible to commit)
 selectConfigStatus(containerId, configId): 'valid' | 'stale' | 'over-allocated'
@@ -242,17 +304,16 @@ What you have already covers most of this. Concrete additions:
 New tables required at integration time:
 
 * `containers`: `id, destination, type, name, committed_config_id`.
-* `configurations`: `id, container_id, name, created_by, created_at, committed, committed_at`.
-* `allocations`: `id, configuration_id, shipment_row_id, quantity`. Composite unique `(configuration_id, shipment_row_id)`.
+* `configurations`: `id, container_id, name, created_by, factory_name` (nullable; siloing column)`, created_at, committed, committed_at`.
+* `allocations`: `id, configuration_id, open_po_item_id, quantity`. Composite unique `(configuration_id, open_po_item_id)`.
 
-RLS additions:
+RLS: see "Visibility & RLS (Total Siloing)" above for the canonical policy spec.
+Total siloing applies -- factories never see other factories' data, in any state.
 
-* Configurations are readable by all authenticated users (admin + factory).
-* Configurations are writable by their creator OR admin.
-* Only **admin** can commit (`UPDATE configurations SET committed = true`). Even
-  though factories can propose, the act of committing is an admin-only privilege.
-* Realtime subscription on `configurations` and `allocations` so committed states
-  propagate to other open sessions.
+Realtime: subscribe to `configurations` and `allocations` so commits and factory
+edits propagate to other open sessions. Realtime events are filtered by RLS
+automatically -- each session only receives events for rows it is allowed to see,
+so siloing holds for live updates as well.
 
 ---
 
@@ -267,7 +328,7 @@ Phase 4 begins. **I have not made these edits** -- they are listed here for revi
    They still cannot:
    * Create or delete containers (admin only).
    * Commit a configuration (admin only).
-   * Edit any shipment column other than Cargo Ready Date.
+   * Edit any open PO column other than Cargo Ready Date.
 
    Suggested revised rows:
 

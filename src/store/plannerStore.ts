@@ -1,19 +1,19 @@
 import { create } from 'zustand'
-import type { ShipmentRow } from '../types/shipment'
+import type { OpenPoStatusReport } from '../types/openPoItem'
 import type { Container } from '../types/container'
-import { containerRepo, shipmentRepo } from '../data/repos'
+import { containerRepo, openPoRepo } from '../data/repos'
 
 interface PlannerStore {
-  shipments: ShipmentRow[]
+  openPoStatusReport: OpenPoStatusReport
   containers: Container[]
 }
 
 export const usePlannerStore = create<PlannerStore>((set) => {
-  shipmentRepo.fetchAll().then((shipments) => set({ shipments }))
+  openPoRepo.fetchAll().then((openPoStatusReport) => set({ openPoStatusReport }))
   containerRepo.fetchAll().then((containers) => set({ containers }))
 
   return {
-    shipments: [],
+    openPoStatusReport: [],
     containers: [],
   }
 })

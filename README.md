@@ -1,10 +1,10 @@
 # Stuffer Planner
 
-A web application for planning container stuffing assignments. Replaces the manual workflow of emailing Excel spreadsheets back and forth by providing a visual drag-and-drop interface for assigning shipment rows to shipping containers.
+A web application for planning container stuffing assignments. Replaces the manual workflow of emailing Excel spreadsheets back and forth by providing a visual drag-and-drop interface for assigning open PO items to shipping containers.
 
 ## How It Works
 
-- **Admin** views all shipment data in an Excel-like grid, drags rows into container cards, and exports the final stuffing plan.
+- **Admin** views all open PO data in an Excel-like grid, drags rows into container cards, and exports the final stuffing plan.
 - **Factory** users interact only to provide Cargo Ready Dates for their assigned lines.
 
 ## Tech Stack
@@ -28,7 +28,7 @@ npm run dev
 src/
   components/
     layout/       # AppLayout, SplitPane
-    grid/         # Shipment data grid
+    grid/         # Open PO status report grid
     containers/   # Container tray and cards
     drag/         # Drag overlay and sortable rows
   store/          # Zustand store

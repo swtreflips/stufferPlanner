@@ -3,7 +3,7 @@ import SplitPane from './SplitPane'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 
-const ShipmentGrid = lazy(() => import('../grid/ShipmentGrid'))
+const OpenPoStatusReport = lazy(() => import('../grid/OpenPoStatusReport'))
 
 const containerPanelPlaceholder = (
   <div className="flex flex-col items-center justify-center h-full gap-3 text-navy-400">
@@ -29,7 +29,7 @@ const gridLoadingFallback = (
 
 export default function AppLayout() {
   const { role } = useAuth()
-  const shipmentCount = usePlannerStore((s) => s.shipments.length)
+  const openPoCount = usePlannerStore((s) => s.openPoStatusReport.length)
 
   return (
     <div className="h-screen w-screen flex flex-col bg-navy-50">
@@ -44,7 +44,7 @@ export default function AppLayout() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-navy-800 text-navy-300 border border-navy-700">
-            {shipmentCount} shipments
+            {openPoCount} open POs
           </span>
           <span className="text-xs font-mono uppercase tracking-widest text-navy-300">
             {role}
@@ -55,7 +55,7 @@ export default function AppLayout() {
         left={containerPanelPlaceholder}
         right={
           <Suspense fallback={gridLoadingFallback}>
-            <ShipmentGrid />
+            <OpenPoStatusReport />
           </Suspense>
         }
       />

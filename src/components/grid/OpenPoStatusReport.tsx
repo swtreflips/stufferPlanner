@@ -6,7 +6,7 @@ import {
   type ColDef,
 } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
-import type { ShipmentRow } from '../../types/shipment'
+import type { OpenPoItem } from '../../types/openPoItem'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
 
@@ -30,10 +30,10 @@ const formatDateCell = (params: { value: unknown }): string =>
 const formatCbmCell = (params: { value: unknown }): string =>
   typeof params.value === 'number' ? params.value.toFixed(4) : ''
 
-export default function ShipmentGrid() {
-  const shipments = usePlannerStore((s) => s.shipments)
+export default function OpenPoStatusReport() {
+  const openPoStatusReport = usePlannerStore((s) => s.openPoStatusReport)
 
-  const columnDefs = useMemo<ColDef<ShipmentRow>[]>(
+  const columnDefs = useMemo<ColDef<OpenPoItem>[]>(
     () => [
       { field: 'documentNumber', headerName: 'PO #', width: 110 },
       { field: 'lineId', headerName: 'Line', width: 70, type: 'numericColumn' },
@@ -95,8 +95,8 @@ export default function ShipmentGrid() {
 
   return (
     <div className="h-full w-full">
-      <AgGridReact<ShipmentRow>
-        rowData={shipments}
+      <AgGridReact<OpenPoItem>
+        rowData={openPoStatusReport}
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
         theme={stufferTheme}

@@ -1,4 +1,4 @@
-export interface ShipmentRow {
+export interface OpenPoItem {
   id: string
   name: string
   dateIssued: string
@@ -15,8 +15,7 @@ export interface ShipmentRow {
   eta: string | null
   cbmPerCase: number
   cbmTotal: number
-  container: string
-  configGroup: string
-  assignedContainerId: string | null
   raw: Record<string, unknown>
 }
+
+export type OpenPoStatusReport = OpenPoItem[]

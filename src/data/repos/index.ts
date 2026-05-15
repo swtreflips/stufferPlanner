@@ -1,18 +1,18 @@
 import { createLocalContainerRepo } from './LocalContainerRepo'
-import { createLocalShipmentRepo } from './LocalShipmentRepo'
-import type { ContainerRepo, ShipmentRepo } from './types'
+import { createLocalOpenPoRepo } from './LocalOpenPoRepo'
+import type { ContainerRepo, OpenPoRepo } from './types'
 
 const dataSource = import.meta.env.VITE_DATA_SOURCE ?? 'local'
 
-function pickShipmentRepo(): ShipmentRepo {
+function pickOpenPoRepo(): OpenPoRepo {
   switch (dataSource) {
     case 'local':
-      return createLocalShipmentRepo()
+      return createLocalOpenPoRepo()
     default:
       console.warn(
         `[repos] Unknown VITE_DATA_SOURCE "${dataSource}". Falling back to local.`,
       )
-      return createLocalShipmentRepo()
+      return createLocalOpenPoRepo()
   }
 }
 
@@ -25,7 +25,7 @@ function pickContainerRepo(): ContainerRepo {
   }
 }
 
-export const shipmentRepo = pickShipmentRepo()
+export const openPoRepo = pickOpenPoRepo()
 export const containerRepo = pickContainerRepo()
 
-export type { ContainerRepo, ShipmentRepo }
+export type { ContainerRepo, OpenPoRepo }
