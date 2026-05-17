@@ -14,48 +14,60 @@ Build a **Stuffer Planner** web application using:
 
 The goal is to replace the current workflow of emailing Excel files back and forth.
 
-There are three user roles. **All three roles see the same planning view**
-(containers on the left, open PO status report on the right) so everyone watches the plan
-evolve in real time. **All three can propose configurations** (see
-[CONTCONFIG.md](CONTCONFIG.md)); only **Admin** and **Internal** can commit them.
+There are three user roles. **Admin and Internal share the full planning view**
+(scenarios + draft and committed containers on the left, open PO status report on
+the right) and are the only roles that can commit. **Factories participate in the
+planning loop with strict siloing**: a factory sees its own scenarios/drafts and
+the slices of internal's drafts that touch its own POs -- never another factory's
+POs, allocations, scenarios, or drafts. The planning model (containers, scenarios,
+allocations, commit-per-container = one OFQ) is specified in
+[CONTCONFIG.md](CONTCONFIG.md).
 
 * **Admin** -- the developer/maintainer of the app (a single role-holder -- the
   user). Owns the deployment, schema, and master data ingestion (backend API push,
   Phase 11). Full read/write authority in the UI. Distinct from Internal because
   the user is one developer, not a team of planners.
 * **Internal** -- planners at the organization (the people who currently send
-  emails to factories). View the full plan, create/delete containers, propose
-  configurations, and **commit** configurations as the finalized plan. Cannot
-  edit open PO data fields (those come from admin's master push and the
+  emails to factories). View the full plan across all scenarios and factories,
+  create/delete containers, create and fork scenarios, allocate PO lines into draft
+  containers, and **commit individual containers** (each commit produces an OFQ).
+  Cannot edit open PO data fields (those come from admin's master push and the
   factories' own updates) and cannot export -- export remains an admin-only
   action.
-* **Factory** -- external vendors supplying the POs. Each factory user views the
-  full plan and proposes configurations by allocating their own assigned PO lines
-  into existing containers. Factories edit **Cargo Ready Date** and the **CBM
-  fields** (`cbmPerCase`, `cbmTotal`) on their own lines -- they own the
-  manufacturing data and enter both CBM values themselves (the app does not derive
-  one from the other). Two ways to update: edit interactively in the grid, **or**
-  upload the same CSV they currently email us (Phase 10.5) -- a seamless
-  transition from the existing workflow. Factories cannot create containers,
-  cannot commit configurations, and cannot edit any other open PO column.
+* **Factory** -- external vendors supplying the POs. Factories **can** create
+  scenarios, draft containers, and allocations -- restricted to their own PO
+  lines -- as proposals to internal. They cannot commit; only internal decides
+  what ships. RLS enforces total siloing: factory A never sees factory B's POs
+  or allocations, even when both appear in the same internal-owned container
+  (each factory sees only her own slice). Factories also edit **Cargo Ready Date**
+  and the **CBM fields** (`cbmPerCase`, `cbmTotal`) on their own lines -- they own
+  the manufacturing data and enter both CBM values themselves (the app does not
+  derive one from the other). Two ways to update those: edit interactively in the
+  grid, **or** upload the same CSV they currently email us (Phase 10.5) -- a
+  seamless transition from the existing workflow.
 
 ## Permissions Matrix
 
-| Capability                                  | Admin | Internal | Factory                  |
-|---------------------------------------------|-------|----------|--------------------------|
-| View container assignments & configurations | Yes   | Yes      | Yes                      |
-| View open PO status report                          | Yes   | Yes      | Yes (own lines only)     |
-| Create / delete containers                  | Yes   | Yes      | No                       |
-| Create configurations on a container        | Yes   | Yes      | Yes                      |
-| Allocate rows into a configuration          | Yes   | Yes      | Yes (own lines only)     |
-| Commit a configuration                      | Yes   | Yes      | No                       |
-| Edit Cargo Ready Date                       | Yes   | No       | Yes (own lines only)     |
-| Edit CBM fields (`cbmPerCase`, `cbmTotal`)  | Yes   | No       | Yes (own lines only)     |
-| Edit any other open PO field               | Yes   | No       | No                       |
-| Upload own factory CSV (partial update)     | No    | No       | Yes (own lines only)     |
-| Export stuffing plan                        | Yes   | No       | No                       |
+| Capability                                  | Admin | Internal | Factory                              |
+|---------------------------------------------|-------|----------|--------------------------------------|
+| View committed containers (OFQs)            | Yes   | Yes      | Yes (only those containing own POs)  |
+| View draft containers                       | Yes   | Yes      | Yes (own drafts + drafts containing own POs; other factories' allocations hidden within shared drafts) |
+| View scenarios                              | Yes   | Yes      | Yes (own scenarios + scenarios containing own POs) |
+| View open PO status report                  | Yes   | Yes      | Yes (own lines only)                 |
+| Create / fork scenarios                     | Yes   | Yes      | Yes                                  |
+| Create draft containers                     | Yes   | Yes      | Yes                                  |
+| Delete draft containers                     | Yes   | Yes      | Own drafts only, and only if all allocations inside belong to the factory |
+| Allocate rows into a draft container        | Yes   | Yes      | Yes (own PO lines only; draft containers only) |
+| Remove allocations                          | Yes   | Yes      | Own allocations only; draft containers only |
+| Commit a container (create OFQ)             | Yes   | Yes      | No                                   |
+| Uncommit a container                        | Yes   | No       | No                                   |
+| Edit Cargo Ready Date                       | Yes   | No       | Yes (own lines only)                 |
+| Edit CBM fields (`cbmPerCase`, `cbmTotal`)  | Yes   | No       | Yes (own lines only)                 |
+| Edit any other open PO field                | Yes   | No       | No                                   |
+| Upload own factory CSV (partial update)     | No    | No       | Yes (own lines only)                 |
+| Export stuffing plan                        | Yes   | No       | No                                   |
 
-Master data ingestion (`open_po_items` table) is separate from the UI permission
+Master data ingestion (`master_items` table) is separate from the UI permission
 model: admin pushes master data system-to-system via the Phase 11 API path, not
 through any in-app upload action.
 
@@ -70,20 +82,23 @@ The screen is divided into two sections:
 ## Left Panel: Container Planning Area
 
 * Vertical scrollable tray of container cards.
-* Each container is bound to a single destination and holds one or more
-  **configurations** (proposals). The full model lives in [CONTCONFIG.md](CONTCONFIG.md).
-* Users navigate between a container's configurations, add new ones, and (admin only)
-  commit one as final.
-* Admin can add or remove containers; both roles can propose configurations.
+* A **scenario switcher** at the top selects the current scenario; committed
+  containers (OFQs) are pinned above and always visible regardless of scenario.
+* Each container is bound to a single destination and exists in one of two states:
+  **draft** (under a scenario, editable) or **committed** (an OFQ; read-only).
+* Internal/Admin users add containers, allocate PO lines into drafts, fork
+  scenarios to explore alternatives, and commit drafts one at a time. Full model
+  in [CONTCONFIG.md](CONTCONFIG.md).
 
 ## Right Panel: Open PO Status Report
 
 * Displays open PO items (hardcoded sample data for MVP).
 * Supports sorting, filtering, and search.
-* Rows display **derived** remaining quantities -- the view shifts as configurations
-  are explored or committed (see [CONTCONFIG.md](CONTCONFIG.md)).
-* Dragging a row onto a container opens an allocation modal asking how many cases to
-  assign; the row is not directly attached to the container.
+* Rows display **derived** remaining quantities scoped to the current scenario:
+  `original - committed - sum(drafts in current scenario)` (see
+  [CONTCONFIG.md](CONTCONFIG.md)). Switching scenarios re-renders the view.
+* Dragging a row onto a draft container opens an allocation modal asking how many
+  cases to assign; the row is not directly attached to the container.
 
 ---
 
@@ -109,31 +124,32 @@ The screen is divided into two sections:
 ## Container Tray
 
 * Scrollable list of containers, each bound to a destination at creation time.
-* Each container holds one or more configurations (proposals); navigation controls
-  let users explore alternatives or add new ones.
-* Container summary metrics reflect the **active configuration**, not the container
-  as a whole.
-* Admin-only: add containers (with destination + type), remove containers that have
-  no committed configuration, commit a configuration. See [CONTCONFIG.md](CONTCONFIG.md).
+* Containers exist in one of two states: **draft** (in a scenario, editable) or
+  **committed** (an OFQ; read-only, globally pinned at the top).
+* A **scenario switcher** selects which draft containers are visible.
+* Internal/Admin: add draft containers (destination + type), allocate, fork
+  scenarios, empty/delete drafts, commit a draft (with OFQ reference).
+  See [CONTCONFIG.md](CONTCONFIG.md).
 
 ## Drag and Drop
 
 * Smooth animations.
 * Drag overlay to prevent clipping.
-* Reorder allocations within a container's active configuration.
-* Dropping a grid row onto a container opens the allocation modal (destination must
-  match the row's `shipTo`). See [CONTCONFIG.md](CONTCONFIG.md).
+* Reorder allocations within a draft container.
+* Dropping a grid row onto a draft container opens the allocation modal
+  (destination must match the row's `shipTo`). Committed containers are not drop
+  targets. See [CONTCONFIG.md](CONTCONFIG.md).
 
 ## State Management
 
-* Track all open PO items (immutable until commit or data refresh).
-* Track containers, their configurations, and the allocations within each
-  configuration.
-* Track which configuration is **active** (visible) and which is **committed** per
-  container.
-* Track UI state (focused container, modal state).
-* Use derived selectors -- never store computed quantities like `committedConsumed`.
-  See [CONTCONFIG.md](CONTCONFIG.md) for the formula.
+* Track all open PO items (`master_items`; only `committed_quantity` mutates, on
+  container commit).
+* Track scenarios, containers (draft and committed in one collection), and
+  allocations.
+* Track UI state (current scenario, focused container, modal state).
+* Use derived selectors -- never store computed quantities. The availability
+  formula and the cross-scenario `stale` flag are derived at runtime. See
+  [CONTCONFIG.md](CONTCONFIG.md).
 
 ## Export
 
@@ -163,7 +179,7 @@ The hardcoded sample data comes from `stufferplannertemplate.csv` with these col
 | CBM per case        | CBM per individual case                          |
 | CBM total           | Total CBM for the line (Quantity * CBM per case) |
 | Container           | Container assignment (empty until assigned)      |
-| Column1             | Illustrative tag (`core`, `configA`, `configB`) showing two example configurations on one container: Config A = `core` ∪ `configA` rows, Config B = `core` ∪ `configB` rows. Not consumed by the app -- present only to demonstrate the configurations concept (see [CONTCONFIG.md](CONTCONFIG.md)). |
+| Column1             | Illustrative tag (`core`, `configA`, `configB`) showing two alternative scenarios for one container: Scenario A pairs `core` with `configA` rows, Scenario B pairs `core` with `configB` rows. Not consumed by the app -- present only to demonstrate the scenario / fork concept (see [CONTCONFIG.md](CONTCONFIG.md)). |
 
 **Note:** Date fields stored as Excel serial numbers must be converted to human-readable dates when displayed.
 
@@ -225,7 +241,7 @@ Reason:
 
 Reason:
 
-* Allocations nested inside configurations nested inside containers are painful to
+* Allocations nested inside containers nested inside scenarios are painful to
   update without it.
 
 ## Toasts
@@ -254,11 +270,11 @@ src/
     containers/
       ContainerTray.tsx
       ContainerCard.tsx
-      AllocationCard.tsx              # row inside a configuration
+      AllocationCard.tsx              # row inside a draft container
       AddContainerDialog.tsx          # destination + type picker (Phase 4)
       AllocationDialog.tsx            # quantity prompt (Phase 5.5)
-      ConfigurationNav.tsx            # arrows + add / delete (Phase 5.6)
-      CommitConfirmDialog.tsx         # commit prompt (Phase 7.5)
+      ScenarioSwitcher.tsx            # scenario picker + fork (Phase 5.6)
+      CommitConfirmDialog.tsx         # commit prompt + OFQ ref (Phase 7.5)
 
     drag/
       DragOverlayRenderer.tsx
@@ -270,8 +286,9 @@ src/
 
   types/
     openPoItem.ts
-    container.ts
-    configuration.ts                  # Configuration + Allocation (Phase 5.5)
+    container.ts                      # Container { status, scenarioId, ... }
+    scenario.ts                       # Scenario (Phase 5.6)
+    allocation.ts                     # Allocation (Phase 5.5)
 
   utils/
     dateHelpers.ts
@@ -329,23 +346,23 @@ interface OpenPoItem {
 }
 ```
 
-## Container and Configuration
+## Scenario, Container, Allocation
 
-The container model holds configurations rather than rows directly. The full model
-(`Container`, `Configuration`, `Allocation`) lives in [CONTCONFIG.md](CONTCONFIG.md);
-see "Data Model" there. Summary:
+The planning model uses three entities. The full schema lives in
+[CONTCONFIG.md](CONTCONFIG.md) "Schema". Summary:
 
-* `Container` -- bound to a single `destination`; holds an array of configurations,
-  with one `activeConfigId` (currently displayed) and at most one `committedConfigId`
-  (finalized). The container's effective `cargoReady` is **derived** at runtime as
-  `max(cargoReady)` across rows in the active configuration -- not stored.
-* `Configuration` -- a snapshot/proposal containing allocations; can be committed at
-  most once.
-* `Allocation` -- `{ openPoItemId, quantity }` within a configuration.
+* `Scenario` -- a folder for draft containers. A lightweight branch; no commit
+  semantics of its own. The default scenario "Main" always exists.
+* `Container` -- bound to a single `destination` and a `type` (20GP/40GP/40HC/45HC).
+  Has a `status`: `'draft'` (scoped to one scenario) or `'committed'` (an OFQ;
+  global, has `ofq_reference`). Commit is per-container.
+* `Allocation` -- `{ containerId, masterItemId, quantity }`. The qty is splittable
+  across multiple containers.
 
-**Important:** Both `committedConsumed(row)` and `container.cargoReady` are derived
-at runtime. Do **not** denormalize either onto stored data -- they update live as
-factories edit Cargo Ready Date and as allocations change.
+**Derived, never stored:** `availability(scenario, item)`, the `stale` flag on
+drafts after a cross-scenario commit, and the container's effective Cargo Ready
+Date (`max(cargoReady)` across its allocations). All update live from the source
+data -- do not denormalize them onto stored rows.
 
 ---
 
@@ -384,16 +401,17 @@ Requirements:
 
 # Container Metrics
 
-Each container card shows metrics for its **active configuration**:
+Each container card shows metrics computed from its current allocations:
 
 * Number of allocated lines.
 * Total CBM (sum of `cbmPerCase * allocation.quantity` across allocations).
 * Total quantity (sum of allocation quantities).
-* **Effective Cargo Ready Date** -- the `max(cargoReady)` across all rows allocated
-  in the active configuration. Drives the container's earliest possible ship date;
-  updates live as factories edit Cargo Ready Date on their lines and as users add
-  or remove allocations.
-* A clear indicator when the active configuration is the committed one.
+* **Effective Cargo Ready Date** -- the `max(cargoReady)` across all allocated
+  rows. Drives the container's earliest possible ship date; updates live as
+  factories edit Cargo Ready Date on their lines and as users allocate/empty.
+* Status badge: `draft` (with scenario name) or `committed` (with OFQ reference).
+* For drafts: a **stale** badge if any allocation now exceeds global availability
+  (because another scenario's container committed and consumed the same PO).
 
 Potential future enhancement:
 
@@ -492,18 +510,20 @@ whether the eventual Supabase swap is a one-day task or a one-week refactor.
    and a `raw: Record<string, unknown>` blob. For Postgres:
    * Dates: store as `timestamptz`, not strings.
    * `raw` becomes a `jsonb` column.
-   * Tables: `open_po_items`, `containers`, `configurations`, `allocations`, `profiles`
-     (with `role: 'admin' | 'internal' | 'factory'` and `factory_name` for RLS).
-     See [CONTCONFIG.md](CONTCONFIG.md) "Visibility & RLS" for the siloing columns.
+   * Tables: `master_items` (the renamed `open_po_items`), `scenarios`,
+     `containers`, `container_allocations`, `profiles` (with
+     `role: 'admin' | 'internal' | 'factory'` and `factory_name` for RLS).
+     Full schema in [CONTCONFIG.md](CONTCONFIG.md) "Schema".
 
-10. **RLS is the security boundary, not the UI.** The three-role split is meaningless
-    without Row Level Security policies in Postgres. Total siloing applies:
-    factories see/edit only their own open PO items (`name = profiles.factory_name`),
-    only the editable fields (`cargoReady`, `cbmPerCase`, `cbmTotal`), and only
-    their own configurations (`factory_name = profiles.factory_name`). Plan
-    policies before any factory UI is written -- see Phase 12 sub-task 2 and
-    [CONTCONFIG.md](CONTCONFIG.md) "Visibility & RLS (Total Siloing)" for the
-    canonical spec.
+10. **RLS is the security boundary, not the UI.** The three-role split is
+    meaningless without Row Level Security policies in Postgres. Factories
+    participate in planning but are **siloed**: a factory sees its own scenarios
+    and drafts plus internal's drafts that touch one of its POs, and only its
+    own allocations within those drafts -- never another factory's data.
+    Editable fields for factories on `master_items`: `cargo_ready`,
+    `cbm_per_case`, `cbm_total`. Plan policies before any factory UI is written
+    -- see Phase 12 sub-task 2 and [CONTCONFIG.md](CONTCONFIG.md) "RLS /
+    multi-role" for the canonical spec.
 
 ## Application Structure
 
@@ -578,19 +598,20 @@ Deliverables:
 
 Goal:
 
-* Render the scrollable container tray (left panel).
+* Render the scrollable container tray (left panel) under the default scenario
+  "Main".
 * "Add Container" button opens a dialog asking for **destination** (selected from
   the distinct `shipTo` values in the loaded open PO items) and container **type**
   (`20GP` / `40GP` / `40HC` / `45HC`).
 * A container is bound to one destination at creation. Only PO rows with matching
   `shipTo` can be allocated into it (enforced in Phase 5.5).
-* Each container card displays its destination, type, and starts with one empty
-  default configuration.
-* Admin-only: remove containers that have no committed configuration.
+* New containers start as empty drafts in the current scenario.
+* Admin/Internal: delete a draft container (drafts only -- committed containers
+  cannot be deleted, only uncommitted).
 
 Deliverables:
 
-* Scrollable tray of container cards, each labeled with destination and type.
+* Scrollable tray of draft container cards, each labeled with destination and type.
 * Add-container dialog populated from the distinct destinations in the data.
 
 ---
@@ -611,17 +632,17 @@ Deliverables:
 
 Goal:
 
-* When a row is dropped onto a container, open a modal asking how many cases to
-  allocate. Full flow specified in [CONTCONFIG.md](CONTCONFIG.md).
-* Modal shows: total quantity, quantity committed elsewhere, quantity already in
-  this configuration, and a numeric input bounded by `1 <= n <= maxAllocatable`
-  where `maxAllocatable = totalQty - committedConsumed - alreadyInThisConfig`.
+* When a row is dropped onto a **draft** container, open a modal asking how many
+  cases to allocate. Full flow specified in [CONTCONFIG.md](CONTCONFIG.md).
+* Modal shows: total quantity, `committed_quantity` globally, quantity already
+  allocated by drafts in the **current scenario**, and a numeric input bounded
+  by `1 <= n <= available_in(currentScenario, item)`.
 * Reject the drop if the container's destination does not match the row's `shipTo`
-  (hard block, not soft warning).
-* On confirm, write an `Allocation` to the active configuration of the target
-  container.
-* Editing an existing allocation: clicking a row inside a container reopens the
-  modal with the current quantity pre-filled. Setting to 0 removes the allocation.
+  (hard block, not soft warning). Reject drops onto committed containers.
+* On confirm, write an `Allocation` to the target draft container.
+* Editing an existing allocation: clicking a row inside a draft container reopens
+  the modal with the current quantity pre-filled. Setting to 0 removes the
+  allocation.
 
 Stack additions:
 
@@ -630,33 +651,41 @@ Stack additions:
 
 Deliverables:
 
-* Drag-and-drop opens the modal.
-* Allocations persist in the store and re-render the grid via derived selectors.
+* Drag-and-drop onto a draft container opens the modal.
+* Allocations persist in the store and re-render the grid via derived selectors
+  scoped to the current scenario.
 
 ---
 
-## Phase 5.6 -- Configurations and Active Snapshot Navigation
+## Phase 5.6 -- Scenarios and Exploration
 
 Goal:
 
-* Each container holds an array of `Configuration` objects (see [CONTCONFIG.md](CONTCONFIG.md)).
-* Container card has navigation controls at the bottom: `<` previous, `>` next, `+`
-  add, trash icon delete (disabled if the configuration is committed).
-* Switching the active configuration on the focused container re-renders the master
-  grid via the derived selector:
+* Introduce the **Scenario** entity (see [CONTCONFIG.md](CONTCONFIG.md) "The model").
+  A scenario is a folder for draft containers; "Main" is the default and cannot be
+  deleted.
+* **Scenario switcher** at the top of the container tray: dropdown of all
+  non-archived scenarios, with `forked from X` lineage labels on non-Main entries.
+* **Fork** action: deep-copies all draft containers (and their allocations) from
+  the current scenario into a new scenario with a user-supplied name.
+* **Empty container** action on each draft card: clears all allocations on that
+  container (in the current scenario only). Confirm before destroying.
+* Switching scenarios re-renders the grid availability via the derived selector:
   ```
-  displayed = totalQty - committedConsumed - activeConfigAllocation
+  available_in(scenario, item) =
+      item.originalQuantity
+    - item.committedQuantity
+    - sum(allocations.quantity for draft containers IN scenario targeting item)
   ```
-  Rows where `displayed == 0` are hidden in that snapshot (collapsed, not deleted --
-  the underlying open PO data is unchanged).
-* Multiple configurations on the same container are alternatives. Only one can be
-  committed (Phase 7.5).
+  Rows where availability == 0 are hidden (collapsed) for that scenario.
+* Multiple scenarios are alternatives; their drafts never affect each other's
+  availability. Only commit (Phase 7.5) reduces master availability globally.
 
 Deliverables:
 
-* User can create multiple configurations per container.
-* User can navigate between them and watch the grid view change.
-* No mutation to the underlying open PO data -- all visual changes are derived.
+* User can create scenarios via fork.
+* User can empty draft containers.
+* Flipping between scenarios re-renders the grid; no mutation to open PO data.
 
 ---
 
@@ -677,23 +706,27 @@ Goal:
 
 ---
 
-## Phase 7.5 -- Commit Flow
+## Phase 7.5 -- Commit Flow (per-container OFQ creation)
 
 Goal:
 
-* "Commit Configuration" button on the container card (**admin and internal**
-  per the permissions matrix; hidden for factory users).
-* Confirmation modal listing exactly what will be consumed.
-* On commit:
-  * Mark configuration `committed = true, committedAt = now()`.
-  * `committedConsumed(row)` is derived at runtime as the sum of committed
-    allocations across all containers -- no denormalized field is stored.
-  * Other uncommitted configurations on the same container are flagged "stale".
-  * Other uncommitted configurations on different containers that allocated the
-    same rows may become "over-allocated" -- they get a warning indicator and
-    cannot be committed until revised.
-* Uncommit support: admin can reverse a commit. The previous baseline is restored.
-  Toasts confirm both commit and uncommit.
+* "Commit Container" button on each **draft** container card (**admin and
+  internal** per the permissions matrix; hidden for factory users).
+* Confirmation modal prompts for the **OFQ reference** (free-text; the freight
+  forwarder's number) and lists exactly what will be consumed:
+  *"Committing N cases across M PO lines as OFQ-XYZ. Continue?"*
+* On commit (one transaction):
+  * Flip container `status = 'committed'`, set `scenario_id = NULL`,
+    `ofq_reference`, and `committed_at`. It's now globally visible (pinned at top
+    of every scenario view, read-only).
+  * Increment `master_items.committed_quantity` per allocation.
+  * Draft containers in other scenarios whose allocations now exceed global
+    availability are flagged **stale** -- derived at runtime via the
+    `scenario_item_availability` view. Never auto-mutated.
+* Uncommit (admin-only): reverses the commit. Decrements
+  `master_items.committed_quantity`, flips the container back to `draft` and
+  reattaches it to a scenario (the originating one if it still exists, else
+  "Main"). Requires a reason string for the audit log.
 
 Stack additions:
 
@@ -702,9 +735,9 @@ Stack additions:
 
 Deliverables:
 
-* Commit consumes PO quantities; the master grid baseline shifts.
-* Stale and over-allocated indicators visible on affected configurations.
-* Uncommit restores the previous baseline.
+* Commit produces an OFQ; the master grid baseline shifts globally.
+* Stale indicators visible on affected drafts in other scenarios.
+* Admin can uncommit a container with an audited reason.
 
 ---
 
@@ -730,45 +763,65 @@ Goal:
 
 Goal:
 
-All three roles render the **same** `AppLayout` (containers + grid) so the evolving
-plan is visible to everyone. This phase wires the role-based restrictions inside
-the shared components via `useAuth()` per the permissions matrix in this document.
+All three roles render the **same** `AppLayout` (scenarios + container tray on the
+left, open PO grid on the right). The difference between roles lives in what each
+role can **see** and **do**, enforced by `useAuth()` checks on the UI side and by
+RLS on the data side. RLS is the security boundary -- the UI checks are for
+usability, not security.
 
 ### Internal role
 
-* Container tray + configuration nav: full access -- create / delete containers,
-  create configurations, **commit** configurations.
+* Scenario switcher + container tray: full access -- create / delete draft
+  containers, fork scenarios, empty drafts, allocate any PO line, **commit a
+  container** to create an OFQ. Cannot uncommit (admin-only).
 * Open PO grid: all rows visible; **all columns `editable: false`** (Internal owns
   planning, not data).
 * No "Upload Excel" toolbar (factory-only feature, Phase 10.5).
 
 ### Factory role
 
-* Container tray: hide "Add Container" / "Delete Container" buttons. Hide the
-  "Commit Configuration" button.
+* Scenario switcher + container tray: visible, scoped to scenarios and drafts
+  that **either** the factory created **or** contain at least one allocation
+  against one of the factory's POs (RLS-driven; UI just renders what it gets).
+* Inside any visible draft container, the factory sees **only her own
+  allocations** -- other factories' allocations in the same container are
+  filtered out by RLS and never reach the client. Internal-created allocations
+  for the factory's own POs are visible (so the factory knows what internal is
+  proposing for her).
+* Can create scenarios, draft containers, and allocations -- but the allocation
+  modal is gated to PO lines where `item.name === factoryName`. Drag-and-drop
+  hides ineligible rows for the factory.
+* Cannot commit, uncommit, or delete a container that holds another factory's
+  allocations.
 * Open PO grid: filter to rows where `item.name === factoryName`. Mark all
-  columns as `editable: false` *except* `cargoReady`, `cbmPerCase`, and `cbmTotal`.
-  Both CBM values are entered manually -- the app does **not** auto-derive one
-  from the other.
-* Allocation modal (Phase 5.5): only allow allocations from rows the factory owns;
-  cap quantity at the factory's available quantity on that line.
-* Bulk-update path: see Phase 10.5 for the CSV upload alternative.
+  columns as `editable: false` *except* `cargoReady`, `cbmPerCase`, and
+  `cbmTotal`. Both CBM values are entered manually -- the app does **not**
+  auto-derive one from the other.
+* Bulk-update path for the editable fields: see Phase 10.5 (CSV upload).
 
 ### Admin role
 
-* Full UI authority (matches the matrix). No restrictions applied.
+* Full UI authority (matches the matrix). Can uncommit a container (with reason).
 * Master data ingestion happens out-of-band via Phase 11's API push -- no UI
   surface for it.
 
+### Provenance display
+
+Every scenario, container, and allocation displays its `created_by` signature
+(factory name or internal user). On internal's review of a mixed draft, this
+makes "who suggested what" visible at a glance. Committed containers also display
+`committed_by` and the OFQ reference.
+
 ### Header
 
-Show a role badge: "Admin" / "Internal" / "Factory". Drop the "Read-only" badge
-from the Phase 1 scaffolding -- factories now have write access to their own
-lines.
+Show a role badge: "Admin" / "Internal" / "Factory" plus the current scenario
+name. Drop any legacy "Read-only" badge -- all roles now have write access to at
+least their own slice.
 
-Changes to factory data and to anyone's proposed/committed configurations are
-reflected in the other roles' views (real-time once Phase 12 realtime
-subscriptions are wired).
+Changes to factory data, factory-created drafts, and Internal/Admin commits all
+propagate to the other roles' views in real time (Phase 12 realtime
+subscriptions). RLS filters the event stream so each session only receives events
+for rows it's allowed to see -- siloing holds for live updates.
 
 ---
 
@@ -842,7 +895,7 @@ files through the app.
 
 ### Mechanism (depends on Phase 12)
 
-Once Supabase is in place, master data lives in the `open_po_items` table. Pushes
+Once Supabase is in place, master data lives in the `master_items` table. Pushes
 arrive via:
 
 * **PostgREST upsert** with the service role key -- suitable for scheduled
@@ -886,42 +939,55 @@ prevent that.
 
 Sub-tasks:
 
-1. **Schema migration.** Create `supabase/migrations/0001_init.sql` with `open_po_items`,
-   `containers`, `configurations`, `allocations`, and `profiles` tables. Dates as
-   `timestamptz`, `raw` as `jsonb`, foreign keys for container assignment, and
-   `factory_name` columns where required for siloing (see CONTCONFIG.md).
+1. **Schema migration.** Create `supabase/migrations/0001_init.sql` with
+   `master_items`, `scenarios`, `containers`, `container_allocations`, and
+   `profiles` tables, plus the `scenario_item_availability` view. Dates as
+   `timestamptz`, `raw` as `jsonb`. Full DDL in
+   [CONTCONFIG.md](CONTCONFIG.md) "Schema".
 
-2. **RLS policies (total siloing).** Enable RLS on `open_po_items`, `containers`,
-   `configurations`, `allocations`, and `profiles`. Each PO has exactly one factory
-   owner, so the `open_po_items` filter is the foundation; allocations and
-   configurations cascade from it. The full policy spec lives in
-   [CONTCONFIG.md](CONTCONFIG.md) "Visibility & RLS (Total Siloing)". Summary:
-   * `admin` and `internal`: full read/write across all tables.
-   * `factory` on `open_po_items`: `SELECT` and `UPDATE` (only `cargoReady`,
-     `cbmPerCase`, `cbmTotal`) where `name = profiles.factory_name`.
-   * `factory` on `configurations`: `SELECT` and `INSERT` where
-     `factory_name = profiles.factory_name`. No `UPDATE` (cannot commit).
-   * `factory` on `allocations`: `SELECT` and `INSERT` only via own
-     configurations and own open PO items (transitive from the two filters above).
+2. **RLS policies (siloed collaboration).** Enable RLS on `master_items`,
+   `scenarios`, `containers`, `container_allocations`, and `profiles`. Full
+   policy spec in [CONTCONFIG.md](CONTCONFIG.md) "RLS / multi-role". Summary:
+   * `admin` and `internal`: full read/write across all tables; only they can
+     commit/uncommit containers.
+   * `factory` on `master_items`: `SELECT` and `UPDATE` (only `cargo_ready`,
+     `cbm_per_case`, `cbm_total`) where `name = profiles.factory_name`.
+   * `factory` on `scenarios`: `SELECT` where `created_by = self` OR the
+     scenario contains an allocation against a factory PO. INSERT own scenarios.
+   * `factory` on `containers`: `SELECT` where `created_by = self` OR the
+     container has at least one allocation referencing a factory PO. INSERT
+     draft containers. DELETE only own drafts that contain only own allocations.
+     No commit/uncommit.
+   * `factory` on `container_allocations`: `SELECT` where `master_item_id` is a
+     factory PO. INSERT own allocations into draft containers. DELETE own
+     allocations from draft containers. **Each allocation row is independently
+     filtered** -- a factory inside a mixed container sees only her own rows;
+     other factories' allocations in the same container are not returned.
    * Cross-factory leakage is structurally impossible: a factory never sees
-     another factory's open PO items, allocations, or configurations -- proposed or
-     committed.
+     another factory's master rows, allocations, scenarios, or containers
+     unless that container also contains one of her own allocations (and even
+     then she only sees her own rows within it).
 
 3. **Auth wiring.** Replace the placeholder `AuthProvider` from the deployment
-   scaffolding with a real Supabase session. Email or magic-link login. Role read from
-   the `profiles` table.
+   scaffolding with a real Supabase session. Email or magic-link login. Role read
+   from the `profiles` table.
 
-4. **`SupabaseRepo` implementation.** New file implementing the Phase 2.5
-   `OpenPoRepo` / `ContainerRepo` interfaces using `@supabase/supabase-js`. Toggle
-   between local and remote via an env var (e.g. `VITE_DATA_SOURCE=local|supabase`).
+4. **`SupabaseRepo` implementation.** New files implementing the Phase 2.5 repo
+   interfaces (`MasterItemRepo`, `ScenarioRepo`, `ContainerRepo`, `AllocationRepo`)
+   using `@supabase/supabase-js`. Toggle between local and remote via an env var
+   (e.g. `VITE_DATA_SOURCE=local|supabase`).
 
 5. **Realtime subscriptions.** Admin and internal sessions subscribe to
-   `open_po_items`, `configurations`, and `allocations` so factory edits and
-   configuration changes propagate without a refresh. Realtime events are
-   filtered by RLS automatically -- each session only receives events for rows
-   it can see, so siloing holds for live updates as well.
+   `master_items`, `scenarios`, `containers`, and `container_allocations` so
+   factory edits and commit events propagate without a refresh. Factory sessions
+   subscribe only to `master_items` (their own rows) and committed `containers`
+   affecting them. Realtime events are filtered by RLS automatically.
 
-6. **Seed data.** Port `stufferPlannertemplate.csv` into `supabase/seed.sql` so
+6. **RPC functions.** Three Postgres functions: `fork_scenario`,
+   `commit_container`, `uncommit_container`. Bodies sketched in
+   [CONTCONFIG.md](CONTCONFIG.md) "Backend RPCs".
+
+7. **Seed data.** Port `stufferPlannertemplate.csv` into `supabase/seed.sql` so
    dev/staging databases are populated reproducibly.
 
 Deliverables:

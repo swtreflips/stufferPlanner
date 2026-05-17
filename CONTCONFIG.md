@@ -1,383 +1,375 @@
-# CONTCONFIG.md -- Container Configuration Model
+# CONTCONFIG.md — Container Planning Model
 
-This document specifies how container configurations, quantity allocation, and commit
-semantics work in the Stuffer Planner. It supplements [CLAUDE.md](CLAUDE.md) and
-should be implemented across Phases 4-8 (with revisions to the existing phase plan --
-see "Implications for CLAUDE.md" at the end).
+The canonical design for how containers, scenarios, and PO allocations work in the Stuffer Planner. Supplements [CLAUDE.md](CLAUDE.md). Implemented progressively across Phases 4–8.
 
 ---
 
-## Core Concepts
+## What you're doing
 
-| Concept            | Definition                                                                                          |
-|--------------------|-----------------------------------------------------------------------------------------------------|
-| **Container**      | A physical shipping unit bound to a single **destination** (e.g. "Simi Valley, CA").                |
-| **Configuration**  | A snapshot/proposal of how PO lines fill one container. A container may hold multiple configurations side-by-side as alternatives. |
-| **Allocation**     | Within a configuration: a (PO line, quantity) pair. Quantity may be partial.                        |
-| **Active config**  | The configuration currently being viewed for a given container. Only one active per container.      |
-| **Committed config** | The configuration declared final. At most one per container. Commits consume PO quantities from the master dataframe baseline. |
+You build Ocean Freight Quotes. Each OFQ is **one container's worth of decision**: *"we're booking this container with this set of POs."* OFQs are committed **incrementally** — one at a time, on different days, as POs become ready and decisions firm up. Waiting to commit everything in a batch costs time.
 
-A container is a **vessel for proposals**. Configurations are **alternatives within
-that vessel**. Commit promotes one alternative to reality.
+Between commits, you explore alternatives — especially when one PO is big enough to anchor a container but only fills part of it (*"does it pair better with these smaller POs or those?"*).
 
-### Container `cargoReady` is derived
+The system has two jobs:
 
-A container's effective Cargo Ready Date is **not stored** -- it is computed at
-runtime as `max(cargoReady)` across the rows allocated in the active configuration.
-This means the container's ready date updates live whenever:
-
-* A factory edits the Cargo Ready Date on one of its rows.
-* A user adds, removes, or resizes an allocation.
-* A user switches the active configuration on the container.
-
-The committed configuration (if any) provides the "real" ready date for shipping
-purposes; pre-commit configurations show a hypothetical ready date for planning.
-Same derivation, different scope.
-
-### Worked example (from `stufferplannertemplate.csv`)
-
-The sample CSV's `Column1` field illustrates the concept. Two configurations are
-encoded on a single container:
-
-* **Config A** = rows tagged `core` ∪ rows tagged `configA`
-* **Config B** = rows tagged `core` ∪ rows tagged `configB`
-
-The `core` rows appear in both configurations (the container always carries them;
-they are not the variable). The `configA` / `configB` rows are the **alternative
-fills** the user is comparing. Switching the active configuration on this container
-swaps which optional rows appear; committing one of them consumes those PO
-quantities and discards the other proposal.
-
-This tagging is a **demonstration only** -- the app does not parse `Column1`. Real
-configurations are user-created at runtime through the allocation modal.
+1. Make **committing one container at a time** the fast, natural path.
+2. Make **exploring alternatives before committing** cheap and safe.
 
 ---
 
-## Destination Constraint
+## The model — three concepts
 
-Containers are bound to a destination at creation. Only PO lines whose `shipTo` matches
-the container's destination can be allocated into it. The grid should visually mark
-ineligible rows (greyed out, not draggable) when a container is the active drop target.
+### 1. Master Items
 
----
+PO lines from the CSV/API. Each one has `original_quantity` and `committed_quantity`. **`committed_quantity` only goes up.** Nothing else mutates them except commit.
 
-## Quantity Allocation Flow
+### 2. Containers — first-class, with a status
 
-When a user drags a PO row from the grid into a container's active configuration:
+Every container is one of:
 
-1. A modal opens asking: **"How many cases from {available} are you assigning to {container.name}?"**
-2. The modal displays:
-   * Total quantity on the PO line.
-   * Quantity already committed elsewhere (read-only).
-   * Quantity currently allocated in *this* draft configuration (if user is editing).
-   * **Maximum allocatable** = `totalQty - committedConsumed - alreadyInThisConfig`.
-3. User enters a number. Validation: `1 <= n <= maxAllocatable`.
-4. On confirm: an `Allocation` is added to the active configuration.
-5. The grid view updates immediately (see "Master Dataframe View Modes" below).
+- **`draft`** — being explored. Belongs to exactly one **Scenario**. Allocations on it are hypothetical.
+- **`committed`** — locked. Lives globally (no scenario). Has an `ofq_reference`. Its allocations have decremented master availability. **This is an OFQ.**
 
-Editing or removing an allocation: clicking a row inside a container reopens the modal
-with the current quantity pre-filled. Setting quantity to 0 (or a "Remove" button)
-deletes the allocation.
+Status is a one-way ratchet: `draft → committed`. Uncommit is a separate, audited operation.
 
----
+### 3. Scenarios — lightweight branches for drafts only
 
-## Master Dataframe View Modes
+A Scenario is a folder for draft containers. That's all. No commit semantics, no nested configs. It exists so that draft containers in Scenario A don't poison the availability view in Scenario B.
 
-The master open PO status report (right panel) renders **derived** data. The underlying
-PO quantities are never mutated except by commit.
-
-**Mode 1 -- Hypothetical view (default during planning):**
-
-For each PO row, displayed remaining quantity is:
 ```
-displayed = totalQty - committedConsumed(row) - activeConfigAllocation(row)
-```
-Where `activeConfigAllocation` sums allocations from the currently-viewed
-configuration of the currently-focused container. If `displayed == 0` the row is
-hidden (or visually collapsed) for that snapshot. The base data is unchanged --
-this is pure derived state.
-
-**Mode 2 -- Post-commit (permanent):**
-
-When a configuration is committed:
-```
-committedConsumed(row) += sum of that config's allocations for (row)
-```
-Now `available(row) = totalQty - committedConsumed(row)` is a smaller number for all
-future configurations across all containers.
-
-**Important:** When viewing a configuration on Container A, allocations from Container
-B's *uncommitted* configurations are NOT subtracted from the display. They are
-hypothetical, not real. Only committed allocations reduce the baseline.
-
----
-
-## Configuration Navigation
-
-Each container card has navigation controls (arrows or tabs) at its bottom edge to:
-
-* Cycle through existing configurations (Config A, Config B, ...).
-* Add a new empty configuration.
-* Delete the active configuration (if not committed).
-* Show which configuration is committed (e.g. green ring + lock icon).
-
-When the user switches the active configuration on a container, the master grid
-re-renders to reflect the new hypothetical view.
-
----
-
-## Commit Flow
-
-1. User selects a configuration as the active one on a container.
-2. Clicks "Commit Configuration".
-3. Confirmation modal: "Committing will consume {n} cases across {m} PO lines. This
-   cannot be undone except by uncommitting. Proceed?"
-4. On confirm:
-   * Mark configuration as `committed = true, committedAt = now()`.
-   * Increment `committedConsumed(row)` for every allocation.
-   * Other uncommitted configurations on this container should be flagged "stale"
-     (still visible, but with a warning icon -- see Open Questions).
-   * Other uncommitted configurations on *other* containers that allocated from the
-     same PO lines may now be over-allocated -- they get a "needs revision" indicator.
-5. Container header shows committed status and which configuration is committed.
-
-**Uncommit / revert:** Optional but recommended. Reverses the consumption. Implementing
-this becomes important the first time someone commits the wrong configuration in
-production.
-
----
-
-## Data Model
-
-Proposed additions to [src/types/](src/types/):
-
-```ts
-// src/types/container.ts (revised)
-export interface Container {
-  id: string
-  name: string
-  type: '20GP' | '40GP' | '40HC' | '45HC'
-  destination: string                    // matches OpenPoItem.shipTo
-  configurations: Configuration[]
-  activeConfigId: string                  // which config is currently displayed
-  committedConfigId: string | null        // null = no commit yet
-}
-
-// src/types/configuration.ts (new)
-export interface Configuration {
-  id: string
-  containerId: string
-  name: string                            // "Config A", "Config B", ...
-  createdBy: string                       // user id
-  factoryName: string | null              // siloing column: NULL for admin/internal
-                                          // configs; set to the factory name for
-                                          // factory-created configs. Drives RLS.
-  createdAt: string                       // ISO timestamp
-  committed: boolean
-  committedAt: string | null
-  allocations: Allocation[]
-}
-
-export interface Allocation {
-  openPoItemId: string
-  quantity: number                        // cases assigned in this configuration
-}
+  committed containers (global)  ◄──── always visible everywhere
+  ─────────────────────────────
+  Scenario "Main"
+    Draft container 1
+    Draft container 2
+  ─────────────────────────────
+  Scenario "Alt-OptB"
+    Draft container 3
 ```
 
-The existing `OpenPoItem` does not need new fields. The `committedConsumed` value is
-derived at runtime by summing committed allocations across all containers for that
-row. This avoids a denormalized field that can drift out of sync.
+When viewing Scenario "Main," availability = `original - committed - sum(drafts in Main)`. Switch to "Alt-OptB" and it recomputes against that scenario's drafts.
 
 ---
 
-## Visibility & RLS (Total Siloing)
+## Availability math
 
-Factories must never see another factory's data -- proposed, committed, or
-otherwise. Each PO has exactly one factory owner, so RLS on the `open_po_items` table
-is the foundation of the silo; everything else cascades from it.
+```
+available_in(scenario, item) =
+    item.original_quantity
+  - item.committed_quantity
+  - sum(allocations.quantity
+        for draft containers IN scenario
+        targeting item)
+```
 
-| Table             | Siloing column                                                     | Factory RLS                                                                                       |
-|-------------------|--------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
-| `open_po_items`       | `name`                                                             | `SELECT` and `UPDATE` (only `cargoReady`, `cbmPerCase`, `cbmTotal`) where `name = my_factory_name` |
-| `configurations`  | `factory_name` (set at INSERT; `NULL` for admin/internal configs)  | `SELECT` and `INSERT` where `factory_name = my_factory_name`. No `UPDATE` (no commit privilege).  |
-| `allocations`     | inherited via `open_po_item_id -> open_po_items.name`              | `SELECT` and `INSERT` only via own open PO items **and** own configurations (transitive)          |
-
-Admin and Internal roles bypass these filters (full read/write).
-
-### How the cascade works
-
-* **Open PO items are the foundation.** A factory's session can only `SELECT` /
-  `UPDATE` rows where `name = my_factory_name`. Postgres rewrites every query.
-* **Allocations inherit automatically.** A factory `INSERT` on `allocations`
-  must reference an `open_po_item_id` -- the `open_po_items` RLS filter rejects any
-  reference to another factory's row. No extra policy needed beyond verifying
-  the parent configuration is also theirs.
-* **Configurations are explicitly tagged.** Internal/admin-created configs have
-  `factory_name = NULL` (invisible to factories). Factory-created configs have
-  `factory_name = my_factory_name` (visible only to that factory + internal/admin).
-  RLS `INSERT WITH CHECK` enforces that factories cannot spoof another factory's
-  name, and that internal/admin cannot accidentally tag a config with a factory
-  name.
-
-### Derived signal: `quantityRemaining` decreases without leakage
-
-When internal commits a configuration that consumes a factory's PO line, the
-factory sees their `quantityRemaining` go down without seeing the committed
-configuration that consumed it (the configuration has `factory_name = NULL` and
-is RLS-invisible to them). If a factory needs to know **why**, surface a per-row
-status like `"PO X line Y committed to a shipping plan"` -- never expose the
-contents of the winning configuration to the factory.
-
-This is the only point where derived information about another factory's
-activity could leak. The mitigation is to keep the status message generic
-("committed to a plan") rather than specific ("committed to Container Z with
-Factory B's lines").
+Committed containers globally reduce. Draft containers only reduce within their scenario's view.
 
 ---
 
-## State Management (Zustand)
+## The verbs — five operations
 
-Store shape:
+| Verb | What it does | Scope |
+|---|---|---|
+| **Allocate** | Place qty of a master item into a draft container | one container |
+| **Empty** | Remove all allocations from a draft container | one container |
+| **Commit** | Flip status `draft → committed`, decrement master, record OFQ | one container |
+| **Fork scenario** | Deep-copy a scenario's draft containers into a new scenario | one scenario |
+| **Delete** | Hard-remove a draft container or empty scenario | one entity |
+
+That is the entire verb set. Every workflow composes from these.
+
+---
+
+## Walkthrough 1 — the simple incremental case (no forks)
+
+Monday morning. Default scenario "Main" is selected.
+
+1. Create Container A in Main, type 40HC.
+2. Drag PO lines into it.
+3. Click **Commit** → modal asks for OFQ reference → OFQ-2026-014 created. Container A is now `committed`, globally visible, no longer in Main's draft list.
+4. Master availability shrinks accordingly.
+
+Tuesday afternoon. Same pattern: create Container B, allocate, commit → OFQ-2026-015.
+
+**This is 90% of the workflow.** No scenarios needed beyond the default. No forks. Just allocate-and-commit.
+
+---
+
+## Walkthrough 2 — the exploration case (POCORE + OptA vs OptB)
+
+POCORE × 800, OptA × 200, OptB × 200. POCORE is the anchor; compare pairings.
+
+1. In Main: create Container X, allocate POCORE × 800 + OptA × 200.
+2. Available in Main: POCORE = 0, OptA = 0, OptB = 200.
+3. Want to compare against OptB. **Fork** Main → new scenario *"Alt-OptB"*. Container X is duplicated as X′.
+4. In Alt-OptB: **Empty** Container X′ (drops its allocations in this scenario only). Re-allocate POCORE × 800 + OptB × 200.
+5. Flip between Main and Alt-OptB to compare.
+6. Decide Main wins. Switch to Main, **Commit Container X** → OFQ-2026-016.
+7. Master state: POCORE.committed = 800, OptA.committed = 200.
+8. Alt-OptB now has a draft (X′) whose POCORE allocation is impossible (`POCORE.available_globally = 0`). X′ is flagged **stale**.
+9. User deletes Alt-OptB, or rebuilds X′.
+
+Exploration is local to scenarios; commits are global. Both coexist without contradicting each other.
+
+---
+
+## Cross-scenario invalidation — derived, not stored
+
+When a container commits, drafts in other scenarios may become impossible:
+
+- It's a query, not stored state: `available_globally(item) < 0` implies any draft allocation against it is stale.
+- Run on scenario switch, on commit, on demand.
+- UI surfaces stale drafts with an amber badge and a tooltip: *"POCORE was committed elsewhere — this draft is impossible. Empty or delete."*
+- **Never auto-mutate user data.** The user knows their intent better than the system does.
+
+This is the only cross-cutting rule in the system and it's read-only logic. No transactions, no cascades, no cleanup jobs.
+
+---
+
+## Schema
+
+```sql
+create table scenarios (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  parent_id   uuid references scenarios(id),     -- "forked from", nullable
+  created_by  uuid references auth.users(id),    -- signature
+  created_at  timestamptz not null default now(),
+  archived_at timestamptz
+);
+
+create table master_items (
+  id              text primary key,
+  document_number text not null,
+  line_id         integer not null,
+  sku             text not null,
+  name            text not null,                  -- vendor / factory
+  ship_to         text not null,
+  date_issued     timestamptz,
+  requested_ship_by timestamptz,
+  cargo_ready     timestamptz,                    -- factory-editable
+  status          text,
+  cbm_per_case    numeric(10,4),
+  cbm_total       numeric(12,4),
+  etd_days        integer,
+  eta             timestamptz,
+  original_quantity   integer not null check (original_quantity >= 0),
+  committed_quantity  integer not null default 0 check (committed_quantity >= 0),
+  raw             jsonb not null default '{}'::jsonb,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  constraint committed_le_original check (committed_quantity <= original_quantity)
+);
+
+create table containers (
+  id            uuid primary key default gen_random_uuid(),
+  status        text not null check (status in ('draft','committed')),
+  scenario_id   uuid references scenarios(id),    -- NULL iff committed
+  name          text not null,
+  type          text not null check (type in ('20GP','40GP','40HC','45HC')),
+  destination   text not null,
+  display_order integer not null default 0,
+  ofq_reference text,                             -- populated on commit
+  committed_at  timestamptz,
+  committed_by  uuid references auth.users(id),   -- populated on commit
+  created_by    uuid references auth.users(id),   -- signature
+  created_at    timestamptz not null default now(),
+  constraint draft_has_scenario check (
+    (status = 'draft'     and scenario_id is not null and ofq_reference is null and committed_at is null and committed_by is null) or
+    (status = 'committed' and scenario_id is null     and ofq_reference is not null and committed_at is not null and committed_by is not null)
+  )
+);
+
+create table container_allocations (
+  id              uuid primary key default gen_random_uuid(),
+  container_id    uuid not null references containers(id) on delete cascade,
+  master_item_id  text not null references master_items(id),
+  quantity        integer not null check (quantity > 0),
+  display_order   integer not null default 0,
+  created_by      uuid references auth.users(id),    -- signature
+  created_at      timestamptz not null default now()
+);
+
+create view scenario_item_availability as
+select
+  s.id as scenario_id,
+  m.id as master_item_id,
+  m.original_quantity
+    - m.committed_quantity
+    - coalesce((
+        select sum(a.quantity)
+        from container_allocations a
+        join containers c on c.id = a.container_id
+        where c.status = 'draft'
+          and c.scenario_id = s.id
+          and a.master_item_id = m.id
+      ), 0) as available
+from scenarios s
+cross join master_items m;
+```
+
+Note what's **not** there: no `plans` table, no `configurations` table, no `active_config_id`, no `committed_config_id`, no `committed_quantity` on containers (commit is a status flip, not a denormalized count).
+
+---
+
+## Backend RPCs
+
+Three functions. Everything else is plain CRUD.
+
+```sql
+-- 1. Fork a scenario: deep-copy all draft containers + allocations.
+create function fork_scenario(source_id uuid, new_name text) returns uuid;
+
+-- 2. Commit a container: status flip + master decrement + OFQ tagging.
+create function commit_container(container_id uuid, ofq_ref text) returns void;
+
+-- 3. Uncommit a container: the inverse. Audit log entry mandatory.
+create function uncommit_container(container_id uuid, reason text) returns void;
+```
+
+`commit_container` body, sketched:
+
+```sql
+update master_items m
+set committed_quantity = committed_quantity + a.quantity
+from container_allocations a
+where a.container_id = $1 and a.master_item_id = m.id;
+
+update containers
+set status = 'committed',
+    scenario_id = null,
+    ofq_reference = $2,
+    committed_at = now()
+where id = $1 and status = 'draft';
+```
+
+One transaction. No cascade through other scenarios. Stale drafts surface via the view; they're a UI concern, not a backend write.
+
+---
+
+## RLS / multi-role — siloed collaboration
+
+Factories **do** participate in planning, but with strict siloing: a factory only ever sees its own work and the slices of internal's work that touch its POs. Factories never see other factories' POs, allocations, scenarios, or drafts. Total siloing is preserved.
+
+The rules:
+
+| Table | admin / internal | factory |
+|---|---|---|
+| `master_items` | full r/w | SELECT where `name = profiles.factory_name`; UPDATE only `cargo_ready`, `cbm_per_case`, `cbm_total` on those rows |
+| `scenarios` | full r/w | SELECT where `created_by = self` **OR** any container in the scenario contains an allocation against one of factory's POs. INSERT own. No DELETE on others. |
+| `containers` | full r/w; commit/uncommit | SELECT where `created_by = self` **OR** the container has at least one allocation against a factory PO. INSERT (draft only). DELETE only own draft containers that contain only own allocations. No commit/uncommit. |
+| `container_allocations` | full r/w | SELECT where `master_item_id` is a factory PO. INSERT where `master_item_id` is a factory PO **and** the parent container is a draft. DELETE own allocations where the parent container is a draft. |
+
+The key invariant: **each `container_allocation` row is independently filtered by the master item's factory ownership.** A factory inside a mixed container sees only her own allocation rows — Factory B's allocations in the same container are simply not returned by Postgres. The container itself is visible (it has at least one of her allocations) but she can't browse what else is inside it.
+
+### Walkthrough — mixed draft container
+
+Internal creates draft Container X in scenario "Main" with two allocations: Factory A × 100 and Factory B × 200.
+
+- **Internal** sees Container X with both allocations.
+- **Factory A** sees Container X exists; sees her 100; does not see Factory B's 200.
+- **Factory B** sees Container X exists; sees her 200; does not see Factory A's 100.
+- Either factory can **add** her own allocations to Container X (the container is a draft).
+- Neither factory can remove the other's allocation, edit the container's name/type, or commit it.
+- Internal commits → both factories see the committed OFQ with their own line in it; cross-factory data remains hidden.
+
+### Walkthrough — factory's own scenario
+
+Factory A creates her own scenario "A's idea", with Container Y containing only her POs.
+
+- **Internal** sees the scenario and the container with all its contents (created_by = Factory A).
+- **Factory A** sees her scenario and container normally.
+- **Factory B** sees nothing — the scenario has no allocations referencing her POs and she didn't create it.
+- Internal can fork the scenario, modify, or commit Container Y directly to produce an OFQ.
+
+---
+
+## Provenance (signatures)
+
+Every `scenario`, `container`, and `container_allocation` row carries `created_by` referencing `auth.users(id)`. Committed containers additionally carry `committed_by` for OFQ audit.
+
+UI surface:
+
+- **Scenario card**: *"forked from X · created by [name]"*.
+- **Container header**: *"draft by [name]"* or *"OFQ-2026-014 · committed by [name]"*.
+- **Allocation card**: small chip showing creator name (factory name or internal user). When internal reviews a draft, who-suggested-what is visible at a glance.
+
+For factory-created rows the displayed name is the factory name (from `profiles.factory_name`). For internal/admin, the user's display name.
+
+---
+
+## Frontend store
 
 ```ts
 interface PlannerStore {
-  // Source of truth (mutated only on data load and commit)
-  openPoItems: OpenPoItem[]
-  containers: Container[]
+  masterItems: MasterItem[]
+  scenarios: Scenario[]
+  containers: Container[]                 // both draft and committed in one collection
+  allocations: Allocation[]
 
-  // UI state
-  focusedContainerId: string | null       // which container the grid view follows
+  currentScenarioId: string               // null = "no scenario", just committed view
 
-  // Actions
-  createContainer(destination: string, type: ContainerType): void
-  addConfiguration(containerId: string): string         // returns new config id
-  setActiveConfig(containerId: string, configId: string): void
-  allocate(containerId: string, configId: string, rowId: string, qty: number): void
-  removeAllocation(containerId: string, configId: string, rowId: string): void
-  commitConfiguration(containerId: string, configId: string): void
-  uncommitConfiguration(containerId: string): void
+  // Derived
+  availableQty(scenarioId: string, masterItemId: string): number
+  staleDrafts(): Container[]
+
+  // Verbs
+  allocate(containerId: string, masterItemId: string, qty: number):
+    | { ok: true }
+    | { ok: false; reason: 'insufficient'; available: number }
+  emptyContainer(containerId: string): void
+  forkScenario(name: string, sourceId?: string): Promise<string>
+  commitContainer(containerId: string, ofqRef: string): Promise<void>
+  uncommitContainer(containerId: string, reason: string): Promise<void>
 }
 ```
 
-Selectors (computed, memoized):
-
-```ts
-// How many cases of (rowId) have been committed across all containers
-selectCommittedConsumed(rowId): number
-
-// What the user currently sees for a row, given the focused container's active config
-selectDisplayedRemaining(rowId): number
-
-// Rows visible in the grid right now (hidden if displayedRemaining == 0)
-selectVisibleOpenPoItems(): OpenPoItem[]
-
-// Whether a configuration is over-allocated (impossible to commit)
-selectConfigStatus(containerId, configId): 'valid' | 'stale' | 'over-allocated'
-```
-
-Use **Zustand's `immer` middleware** so deep allocation updates stay readable.
+Five verbs, each with one clear contract.
 
 ---
 
-## Stack Additions
+## UX
 
-What you have already covers most of this. Concrete additions:
+- **Top-of-tray scenario switcher.** A simple dropdown. Default scenario "Main" always exists and can't be deleted. New scenarios appear with a `forked from X` lineage label.
+- **Committed containers pinned at the top of the tray**, in every scenario view, read-only, with their OFQ reference visible. They're reality — they don't disappear when you change scenarios.
+- **Draft containers below**, under the current scenario, with edit controls. *Empty / Delete / Commit* per card.
+- **Stale badge** on drafts where global availability has gone negative; tooltip names the offending master item.
+- **Commit confirmation modal** prompts for the OFQ reference (and lists the allocations being consumed).
+- **No side-by-side comparison view in MVP.** Flipping the dropdown is enough. Side-by-side comes later if needed.
 
-### Required
+---
 
-| Need                              | Recommendation             | Why                                                                                  |
-|-----------------------------------|----------------------------|--------------------------------------------------------------------------------------|
-| Allocation modal                  | `@radix-ui/react-dialog`   | ~5 KB, fully accessible, headless (style with Tailwind). Don't roll your own.        |
-| Immutable nested updates          | `immer` (Zustand middleware) | Allocation arrays nested inside configurations nested inside containers will be miserable to update without it. |
-| Toast feedback (commit / errors)  | `sonner`                   | ~3 KB, no setup overhead. "Configuration committed" / "Cannot allocate -- exceeds available" messages. |
+## Design principles
 
-### Recommended
+The whole model rests on one test: **can the user always predict what their click will do, and does each verb solve one problem cleanly?**
 
-| Need                              | Recommendation             | Why                                                                                  |
-|-----------------------------------|----------------------------|--------------------------------------------------------------------------------------|
-| Confirm dialog for commit         | Same Radix Dialog          | Reuse the modal system. Don't pull in a separate confirm library.                    |
-| Numeric input with bounds         | Native `<input type="number" min max>` + Tailwind | One field; no need for `react-hook-form`.                       |
-| Optimistic update batching        | Already in Zustand        | Wrap multi-step operations (e.g. commit) in a single `set` call.                     |
+- Allocate → puts cases in a container.
+- Empty → removes cases from a container.
+- Commit → ships a container (creates an OFQ).
+- Fork → duplicates an exploration to vary it.
+- Delete → cleanup.
 
-### Phase 12 (Supabase) implications
-
-New tables required at integration time:
-
-* `containers`: `id, destination, type, name, committed_config_id`.
-* `configurations`: `id, container_id, name, created_by, factory_name` (nullable; siloing column)`, created_at, committed, committed_at`.
-* `allocations`: `id, configuration_id, open_po_item_id, quantity`. Composite unique `(configuration_id, open_po_item_id)`.
-
-RLS: see "Visibility & RLS (Total Siloing)" above for the canonical policy spec.
-Total siloing applies -- factories never see other factories' data, in any state.
-
-Realtime: subscribe to `configurations` and `allocations` so commits and factory
-edits propagate to other open sessions. Realtime events are filtered by RLS
-automatically -- each session only receives events for rows it is allowed to see,
-so siloing holds for live updates as well.
+Every workflow composes from these. No verb takes a flag that changes its kind. No verb secretly triggers another verb. No verb's name leaves the user guessing about scope.
 
 ---
 
 ## Implications for CLAUDE.md
 
-This document changes things that should be reflected in [CLAUDE.md](CLAUDE.md) before
-Phase 4 begins. **I have not made these edits** -- they are listed here for review.
+Sections needing alignment with this model:
 
-1. **Permissions matrix needs revision.** The current matrix says factories cannot
-   drag rows or add/remove containers. With this configuration model, factories
-   *can* create configurations and allocate rows (to propose stuffing arrangements).
-   They still cannot:
-   * Create or delete containers (admin only).
-   * Commit a configuration (admin only).
-   * Edit any open PO column other than Cargo Ready Date.
-
-   Suggested revised rows:
-
-   | Capability                              | Admin | Factory |
-   |-----------------------------------------|-------|---------|
-   | Create / delete containers              | Yes   | No      |
-   | Create configurations on a container    | Yes   | Yes     |
-   | Allocate rows into a configuration      | Yes   | Yes     |
-   | Commit a configuration                  | Yes   | No      |
-
-2. **Phase 4 (Container Tray) needs to mention destinations.** A container is created
-   *with* a destination, not as a generic empty box.
-
-3. **New phases between 5 and 7:**
-   * **Phase 5.5 -- Quantity Allocation Modal.** Drag-to-container opens the dialog.
-   * **Phase 5.6 -- Configurations and Active Snapshot Navigation.** Multiple configs
-     per container, arrow navigation, derived grid view.
-   * **Phase 7.5 -- Commit Flow.** Commit / uncommit, stale-config warnings,
-     over-allocation detection.
-
-4. **Phase 8 (Export) clarification:** Export should emit only the *committed*
-   configurations, not the proposals.
+1. **Permissions matrix** — factories CAN create scenarios, draft containers, and allocations against their own POs (with siloing). They cannot commit/uncommit.
+2. **Phase 4** — containers start empty; destination + type at creation; `created_by` recorded.
+3. **Phase 5.5** — allocation modal writes to a draft container; factory allocations gated to own PO lines.
+4. **Phase 5.6** — **"Scenarios and Exploration"**: scenario switcher, fork, empty. Factories can fork too; siloing applies to the resulting visibility.
+5. **Phase 7.5** — "Commit Container" with OFQ reference; per-container, not per-plan. Admin/Internal only.
+6. **Phase 12 schema** — tables `master_items`, `scenarios`, `containers`, `container_allocations`, `profiles`. RLS as in this doc.
 
 ---
 
-## Open Questions
+## Open questions
 
-These need product decisions before implementation, not technical ones:
-
-1. **Stale config behavior on commit.** When Config A on Container X is committed,
-   what happens to Config B on the same container? Auto-archive, manual-discard, or
-   leave visible as historical?
-2. **Cross-container over-allocation.** When committing Config A on Container X
-   reduces availability such that Config Y on Container Z becomes invalid -- block
-   the commit, warn-and-proceed, or silently mark Y as needing revision?
-3. **Uncommit support.** Is uncommit a feature (lets admin recover from mistakes), or
-   is commit truly final (forces clean discipline)? Recommendation: support it. The
-   first production mistake will demand it.
-4. **Configuration naming.** Auto-name (Config A, B, C) or user-named ("Plan with
-   factory ditar split")? User-named is friendlier but adds a text input to the
-   add-config flow.
-5. **Concurrent editing.** Two users editing the same configuration: last-write-wins,
-   optimistic locking, or pessimistic locking on the configuration? Affects Phase 12
-   realtime design.
-6. **Destination constraint enforcement.** Hard block (cannot drop) or soft warning
-   (drop allowed, error shown)? Recommendation: hard block -- mixing destinations in
-   one container is almost always a bug.
-7. **Empty containers in export.** Do containers with no committed configuration
-   appear in the exported plan, or are they skipped?
-
-Lock these in before Phase 4 starts. Each one ripples into UI choices that are hard
-to retrofit.
+1. **OFQ reference format** — free-text (the freight forwarder's number, typed in) or system-generated (`OFQ-YYYY-NNN`)? Lean toward free-text since the real OFQ number originates externally.
+2. **Uncommit audit** — admin-only with a mandatory reason string? Recommend yes.
+3. **Scenario lifetime** — auto-archive after idle period, or pure manual? Manual is simpler; revisit only if scenario clutter becomes a real problem.
+4. **Container destination binding** — bound at creation (recommended; mixing destinations in one container is almost always a bug).
+5. **Empty container while stale-badged** — clear badge instantly, or wait for re-check? Instant is fine; it's derived state.
