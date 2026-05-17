@@ -13,6 +13,7 @@ import { usePlannerStore } from '../../store/plannerStore'
 import ContainerTray from '../containers/ContainerTray'
 import DragOverlayRenderer from '../drag/DragOverlayRenderer'
 import AllocationDialog from '../containers/AllocationDialog'
+import CommitConfirmDialog from '../containers/CommitConfirmDialog'
 
 const OpenPoStatusReport = lazy(() => import('../grid/OpenPoStatusReport'))
 
@@ -89,6 +90,7 @@ export default function AppLayout() {
         <DragOverlayRenderer />
       </DragOverlay>
       <AllocationDialog />
+      <CommitConfirmDialog />
     </DndContext>
   )
 }

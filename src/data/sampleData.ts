@@ -1,5 +1,4 @@
 import type { MasterItem } from '../types/masterItem'
-import type { Scenario } from '../types/scenario'
 import { excelSerialToISO } from '../utils/dateHelpers'
 
 interface SeedRow {
@@ -52,12 +51,3 @@ export const sampleMasterItems: MasterItem[] = seedRows.map((r) => ({
   cbmTotal: Number((r.cbmPerCase * r.originalQuantity).toFixed(4)),
   raw: { ...r },
 }))
-
-export const sampleMainScenario: Scenario = {
-  id: 'scenario-main',
-  name: 'Main',
-  parentId: null,
-  createdBy: 'system',
-  createdAt: '2026-05-17T00:00:00.000Z',
-  archivedAt: null,
-}

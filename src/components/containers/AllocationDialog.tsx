@@ -13,7 +13,6 @@ export default function AllocationDialog() {
   const masterItems = usePlannerStore((s) => s.masterItems)
   const allocations = usePlannerStore((s) => s.allocations)
   const containers = usePlannerStore((s) => s.containers)
-  const currentScenarioId = usePlannerStore((s) => s.currentScenarioId)
   const availableQty = usePlannerStore((s) => s.availableQty)
   const addAllocation = usePlannerStore((s) => s.addAllocation)
   const updateAllocation = usePlannerStore((s) => s.updateAllocation)
@@ -41,13 +40,11 @@ export default function AllocationDialog() {
     return { container, item, existing }
   }, [mode, allocations, containers, masterItems])
 
-  const scenarioAvailable = resolved
-    ? availableQty(currentScenarioId, resolved.item.id)
-    : 0
+  const globalAvailable = resolved ? availableQty(resolved.item.id) : 0
   const existingQty = resolved?.existing?.quantity ?? 0
-  // Max the user can set this allocation to: current availability in the scenario
+  // Max the user can set this allocation to: current global availability
   // PLUS this allocation's existing quantity (which would be replaced on update).
-  const cap = scenarioAvailable + existingQty
+  const cap = globalAvailable + existingQty
 
   const [quantity, setQuantity] = useState<number>(0)
   const [submitting, setSubmitting] = useState(false)
@@ -57,9 +54,9 @@ export default function AllocationDialog() {
     if (mode?.kind === 'edit' && resolved.existing) {
       setQuantity(resolved.existing.quantity)
     } else {
-      setQuantity(Math.min(scenarioAvailable, resolved.item.originalQuantity))
+      setQuantity(Math.min(globalAvailable, resolved.item.originalQuantity))
     }
-  }, [open, mode, resolved, scenarioAvailable])
+  }, [open, mode, resolved, globalAvailable])
 
   if (!resolved) {
     return (
@@ -153,11 +150,11 @@ export default function AllocationDialog() {
           <dl className="px-5 py-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
             <dt className="text-navy-500">Original quantity</dt>
             <dd className="text-right text-navy-900 font-mono">{item.originalQuantity}</dd>
-            <dt className="text-navy-500">Committed globally</dt>
+            <dt className="text-navy-500">Committed (OFQs)</dt>
             <dd className="text-right text-navy-900 font-mono">{item.committedQuantity}</dd>
-            <dt className="text-navy-500">In current scenario</dt>
+            <dt className="text-navy-500">Allocated in drafts</dt>
             <dd className="text-right text-navy-900 font-mono">
-              {item.originalQuantity - item.committedQuantity - scenarioAvailable}
+              {item.originalQuantity - item.committedQuantity - globalAvailable}
             </dd>
             <dt className="text-navy-500 font-semibold">Available for this draft</dt>
             <dd className="text-right text-navy-900 font-mono font-semibold">{cap}</dd>
@@ -179,8 +176,8 @@ export default function AllocationDialog() {
               />
               {cap === 0 && !isEdit ? (
                 <div className="mt-1 text-[10px] text-coral-accent">
-                  No cases available in this scenario. (Phase 5.6 will surface the "Try a
-                  different arrangement" entry point here.)
+                  No cases available. Empty a draft container holding this PO,
+                  or uncommit an OFQ to free up quantity.
                 </div>
               ) : null}
             </label>

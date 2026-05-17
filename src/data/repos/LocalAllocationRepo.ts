@@ -20,7 +20,6 @@ export function createLocalAllocationRepo(): AllocationRepo {
         masterItemId: input.masterItemId,
         quantity: input.quantity,
         displayOrder: input.displayOrder ?? orderInContainer,
-        createdBy: input.createdBy,
         createdAt: new Date().toISOString(),
       }
       allocations = [...allocations, allocation]

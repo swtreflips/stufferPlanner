@@ -1,19 +1,19 @@
 # CONTCONFIG.md — Container Planning Model
 
-The canonical design for how containers, scenarios, and PO allocations work in the Stuffer Planner. Supplements [CLAUDE.md](CLAUDE.md). Implemented progressively across Phases 4–8.
+Canonical design doc for how containers, allocations, and OFQs work in the Stuffer Planner. Supplements [CLAUDE.md](CLAUDE.md). Implemented across Phases 4–7.5.
 
 ---
 
 ## What you're doing
 
-You build Ocean Freight Quotes. Each OFQ is **one container's worth of decision**: *"we're booking this container with this set of POs."* OFQs are committed **incrementally** — one at a time, on different days, as POs become ready and decisions firm up. Waiting to commit everything in a batch costs time.
+You build Ocean Freight Quotes (OFQs). Each OFQ is **one container's worth of decision**: "we're booking this container with these specific PO lines, these specific quantities." OFQs are committed **incrementally** — one at a time, on different days, as decisions firm up.
 
-Between commits, you explore alternatives — especially when one PO is big enough to anchor a container but only fills part of it (*"does it pair better with these smaller POs or those?"*).
+Before committing, you arrange and re-arrange POs across containers in a **shared, live planning view**. This replaces the current workflow of emailing Excel files back and forth — everyone (admin, internal, factory) sees the same draft state in real time.
 
 The system has two jobs:
 
-1. Make **committing one container at a time** the fast, natural path.
-2. Make **exploring alternatives before committing** cheap and safe.
+1. **Replace the Excel ping-pong** with a single, live, shared planning state.
+2. **Resolve OFQ ambiguity at commit time** by recording the exact line items + quantities that ship in each OFQ. No more "wait, did we already use this PO?" — leftovers stay visible on the master grid.
 
 ---
 
@@ -21,129 +21,86 @@ The system has two jobs:
 
 ### 1. Master Items
 
-PO lines from the CSV/API. Each one has `original_quantity` and `committed_quantity`. **`committed_quantity` only goes up.** Nothing else mutates them except commit.
+PO lines from the CSV / API push. Each has `originalQuantity` and `committedQuantity`. **Only commit moves `committedQuantity`** (upward); uncommit reverses it.
 
-### 2. Containers — first-class, with a status
+### 2. Containers
 
-Every container is one of:
+Every container has a `status`:
 
-- **`draft`** — being explored. Belongs to exactly one **Scenario**. Allocations on it are hypothetical.
-- **`committed`** — locked. Lives globally (no scenario). Has an `ofq_reference`. Its allocations have decremented master availability. **This is an OFQ.**
+- **`draft`** — being arranged. Editable by anyone.
+- **`committed`** — locked. Has an `ofqReference`. The container's allocations have decremented master `committedQuantity` globally. **This is an OFQ.**
 
-Status is a one-way ratchet: `draft → committed`. Uncommit is a separate, audited operation.
+A container is bound to a `destination` and a `type` (20GP / 40GP / 40HC / 45HC) at creation.
 
-### 3. Scenarios — lightweight branches for drafts only
+### 3. Allocations
 
-A Scenario is a folder for draft containers. That's all. No commit semantics, no nested configs. It exists so that draft containers in Scenario A don't poison the availability view in Scenario B.
+A `{containerId, masterItemId, quantity}` triple. The unit of "which cases go in which container." Stays attached to the container even after commit — it's the historical record of what shipped.
 
-```
-  committed containers (global)  ◄──── always visible everywhere
-  ─────────────────────────────
-  Scenario "Main"
-    Draft container 1
-    Draft container 2
-  ─────────────────────────────
-  Scenario "Alt-OptB"
-    Draft container 3
-```
-
-When viewing Scenario "Main," availability = `original - committed - sum(drafts in Main)`. Switch to "Alt-OptB" and it recomputes against that scenario's drafts.
+There are **no scenarios, no forks, no signatures**. One shared world.
 
 ---
 
 ## Availability math
 
 ```
-available_in(scenario, item) =
-    item.original_quantity
-  - item.committed_quantity
-  - sum(allocations.quantity
-        for draft containers IN scenario
-        targeting item)
+available(item) =
+    item.originalQuantity
+  − item.committedQuantity
+  − sum(allocations.quantity for DRAFT containers targeting this item)
 ```
 
-Committed containers globally reduce. Draft containers only reduce within their scenario's view.
+The grid shows this number. When it hits 0 the row dims. When `committedQuantity === originalQuantity`, the row disappears entirely — the PO has fully shipped, nothing left to plan.
 
 ---
 
-## The verbs — five operations
+## The verbs — four operations
 
-| Verb | What it does | Scope |
+| Verb | What it does | Who can do it |
 |---|---|---|
-| **Allocate** | Place qty of a master item into a draft container | one container |
-| **Empty** | Remove all allocations from a draft container | one container |
-| **Commit** | Flip status `draft → committed`, decrement master, record OFQ | one container |
-| **Fork scenario** | Deep-copy a scenario's draft containers into a new scenario | one scenario |
-| **Delete** | Hard-remove a draft container or empty scenario | one entity |
+| **Allocate** | Place qty of a master item into a draft container (or merge into an existing allocation for the same item in the same container) | Anyone |
+| **Empty** | Remove all allocations from one draft container | Anyone |
+| **Commit** | Flip status `draft → committed`, record `ofqReference`, decrement `committedQuantity` on each affected master item | Admin / Internal |
+| **Uncommit** | Reverse a commit: restore master quantities, flip back to draft, null the OFQ reference | Admin only |
 
-That is the entire verb set. Every workflow composes from these.
-
----
-
-## Walkthrough 1 — the simple incremental case (no forks)
-
-Monday morning. Default scenario "Main" is selected.
-
-1. Create Container A in Main, type 40HC.
-2. Drag PO lines into it.
-3. Click **Commit** → modal asks for OFQ reference → OFQ-2026-014 created. Container A is now `committed`, globally visible, no longer in Main's draft list.
-4. Master availability shrinks accordingly.
-
-Tuesday afternoon. Same pattern: create Container B, allocate, commit → OFQ-2026-015.
-
-**This is 90% of the workflow.** No scenarios needed beyond the default. No forks. Just allocate-and-commit.
+Supporting CRUD: create container, delete (draft) container, remove or edit allocation. The four verbs above are the load-bearing ones.
 
 ---
 
-## Walkthrough 2 — the exploration case (POCORE + OptA vs OptB)
+## Walkthrough — the typical day
 
-POCORE × 800, OptA × 200, OptB × 200. POCORE is the anchor; compare pairings.
+PO X has 2000 cases.
 
-1. In Main: create Container X, allocate POCORE × 800 + OptA × 200.
-2. Available in Main: POCORE = 0, OptA = 0, OptB = 200.
-3. Want to compare against OptB. **Fork** Main → new scenario *"Alt-OptB"*. Container X is duplicated as X′.
-4. In Alt-OptB: **Empty** Container X′ (drops its allocations in this scenario only). Re-allocate POCORE × 800 + OptB × 200.
-5. Flip between Main and Alt-OptB to compare.
-6. Decide Main wins. Switch to Main, **Commit Container X** → OFQ-2026-016.
-7. Master state: POCORE.committed = 800, OptA.committed = 200.
-8. Alt-OptB now has a draft (X′) whose POCORE allocation is impossible (`POCORE.available_globally = 0`). X′ is flagged **stale**.
-9. User deletes Alt-OptB, or rebuilds X′.
+1. **Internal** creates Container A (40HC, Simi Valley) and drags PO X (allocate 1200). Grid shows: original=2000, committed=0, available=800.
+2. **Internal** creates Container B (40HC, Simi Valley) and drags PO X (allocate the remaining 800). Available drops to 0; the row dims.
+3. **Internal** clicks **Commit** on Container A → modal asks for OFQ reference → types `OFQ-2026-014` → confirms. Container A flips to committed; master `committedQuantity` for PO X = 1200; Container A is now pinned at the top of the tray with the OFQ ref visible.
+4. **Internal** commits Container B as `OFQ-2026-015`. Master `committedQuantity` = 2000; row disappears from the grid. PO X is fully shipped.
+5. Some operational change comes up — Internal needs to uncommit Container A. **Admin** clicks **Uncommit**. Container A reverts to draft; `committedQuantity` drops back to 800; the PO X row reappears in the grid with available = 0 (still allocated in draft); user can now edit Container A as needed.
 
-Exploration is local to scenarios; commits are global. Both coexist without contradicting each other.
+No scenarios involved. No forks. The current state is what's true; everyone sees it.
 
 ---
 
-## Cross-scenario invalidation — derived, not stored
+## Walkthrough — splitting a multi-item PO across containers
 
-When a container commits, drafts in other scenarios may become impossible:
+PO Y has two line items: Line 1 (300 cases) and Line 2 (700 cases). You want to ship them in two different OFQs.
 
-- It's a query, not stored state: `available_globally(item) < 0` implies any draft allocation against it is stale.
-- Run on scenario switch, on commit, on demand.
-- UI surfaces stale drafts with an amber badge and a tooltip: *"POCORE was committed elsewhere — this draft is impossible. Empty or delete."*
-- **Never auto-mutate user data.** The user knows their intent better than the system does.
+1. Create Container P (line 1 only, 300 cases). Commit as `OFQ-2026-016`.
+2. Create Container Q. Drag PO Y line 2 in (700 cases). Commit as `OFQ-2026-017`.
+3. Master grid: line 1 has committed=300, available=0, hidden. Line 2 has committed=700, available=0, hidden. Both lines are out of the planning pool.
 
-This is the only cross-cutting rule in the system and it's read-only logic. No transactions, no cascades, no cleanup jobs.
+This is the OFQ ambiguity fix you wanted: each commit records line + qty, so there's no more "the PO was partially assigned but I forgot which part."
 
 ---
 
-## Schema
+## Schema (target shape; Phase 12 lands as Postgres)
 
 ```sql
-create table scenarios (
-  id          uuid primary key default gen_random_uuid(),
-  name        text not null,
-  parent_id   uuid references scenarios(id),     -- "forked from", nullable
-  created_by  uuid references auth.users(id),    -- signature
-  created_at  timestamptz not null default now(),
-  archived_at timestamptz
-);
-
 create table master_items (
   id              text primary key,
   document_number text not null,
   line_id         integer not null,
   sku             text not null,
-  name            text not null,                  -- vendor / factory
+  name            text not null,                  -- vendor
   ship_to         text not null,
   date_issued     timestamptz,
   requested_ship_by timestamptz,
@@ -164,19 +121,16 @@ create table master_items (
 create table containers (
   id            uuid primary key default gen_random_uuid(),
   status        text not null check (status in ('draft','committed')),
-  scenario_id   uuid references scenarios(id),    -- NULL iff committed
   name          text not null,
   type          text not null check (type in ('20GP','40GP','40HC','45HC')),
   destination   text not null,
   display_order integer not null default 0,
-  ofq_reference text,                             -- populated on commit
+  ofq_reference text,
   committed_at  timestamptz,
-  committed_by  uuid references auth.users(id),   -- populated on commit
-  created_by    uuid references auth.users(id),   -- signature
   created_at    timestamptz not null default now(),
-  constraint draft_has_scenario check (
-    (status = 'draft'     and scenario_id is not null and ofq_reference is null and committed_at is null and committed_by is null) or
-    (status = 'committed' and scenario_id is null     and ofq_reference is not null and committed_at is not null and committed_by is not null)
+  constraint draft_or_committed check (
+    (status = 'draft'     and ofq_reference is null and committed_at is null) or
+    (status = 'committed' and ofq_reference is not null and committed_at is not null)
   )
 );
 
@@ -186,115 +140,45 @@ create table container_allocations (
   master_item_id  text not null references master_items(id),
   quantity        integer not null check (quantity > 0),
   display_order   integer not null default 0,
-  created_by      uuid references auth.users(id),    -- signature
   created_at      timestamptz not null default now()
 );
 
-create view scenario_item_availability as
-select
-  s.id as scenario_id,
-  m.id as master_item_id,
-  m.original_quantity
-    - m.committed_quantity
-    - coalesce((
-        select sum(a.quantity)
-        from container_allocations a
-        join containers c on c.id = a.container_id
-        where c.status = 'draft'
-          and c.scenario_id = s.id
-          and a.master_item_id = m.id
-      ), 0) as available
-from scenarios s
-cross join master_items m;
+create index on container_allocations(container_id);
+create index on container_allocations(master_item_id);
 ```
 
-Note what's **not** there: no `plans` table, no `configurations` table, no `active_config_id`, no `committed_config_id`, no `committed_quantity` on containers (commit is a status flip, not a denormalized count).
+Notice what's not there: no `scenarios`, no `created_by` / `committed_by`, no `factory_name` siloing columns.
 
 ---
 
-## Backend RPCs
+## Backend operations (Phase 12)
 
-Three functions. Everything else is plain CRUD.
+Two RPCs are enough; everything else is CRUD.
 
 ```sql
--- 1. Fork a scenario: deep-copy all draft containers + allocations.
-create function fork_scenario(source_id uuid, new_name text) returns uuid;
-
--- 2. Commit a container: status flip + master decrement + OFQ tagging.
 create function commit_container(container_id uuid, ofq_ref text) returns void;
-
--- 3. Uncommit a container: the inverse. Audit log entry mandatory.
-create function uncommit_container(container_id uuid, reason text) returns void;
+create function uncommit_container(container_id uuid) returns void;
 ```
 
-`commit_container` body, sketched:
+`commit_container` in one transaction:
+1. Sum allocations grouped by `master_item_id`; increment `master_items.committed_quantity`.
+2. Update container: `status = 'committed'`, `ofq_reference`, `committed_at = now()`.
 
-```sql
-update master_items m
-set committed_quantity = committed_quantity + a.quantity
-from container_allocations a
-where a.container_id = $1 and a.master_item_id = m.id;
-
-update containers
-set status = 'committed',
-    scenario_id = null,
-    ofq_reference = $2,
-    committed_at = now()
-where id = $1 and status = 'draft';
-```
-
-One transaction. No cascade through other scenarios. Stale drafts surface via the view; they're a UI concern, not a backend write.
+`uncommit_container` is the inverse.
 
 ---
 
-## RLS / multi-role — siloed collaboration
+## RLS / multi-role
 
-Factories **do** participate in planning, but with strict siloing: a factory only ever sees its own work and the slices of internal's work that touch its POs. Factories never see other factories' POs, allocations, scenarios, or drafts. Total siloing is preserved.
+Strict simplicity:
 
-The rules:
+| Table | admin | internal | factory |
+|---|---|---|---|
+| `master_items` | full r/w | read all; no write to PO data | read all; UPDATE `cargo_ready`, `cbm_per_case`, `cbm_total` only on rows where `name = profiles.factory_name` |
+| `containers` (any status) | full r/w; commit/uncommit | full r/w; commit only (no uncommit) | read all; INSERT (draft); UPDATE (draft, non-commit fields); DELETE (draft); no commit/uncommit |
+| `container_allocations` | full r/w | full r/w | full r/w on rows in draft containers |
 
-| Table | admin / internal | factory |
-|---|---|---|
-| `master_items` | full r/w | SELECT where `name = profiles.factory_name`; UPDATE only `cargo_ready`, `cbm_per_case`, `cbm_total` on those rows |
-| `scenarios` | full r/w | SELECT where `created_by = self` **OR** any container in the scenario contains an allocation against one of factory's POs. INSERT own. No DELETE on others. |
-| `containers` | full r/w; commit/uncommit | SELECT where `created_by = self` **OR** the container has at least one allocation against a factory PO. INSERT (draft only). DELETE only own draft containers that contain only own allocations. No commit/uncommit. |
-| `container_allocations` | full r/w | SELECT where `master_item_id` is a factory PO. INSERT where `master_item_id` is a factory PO **and** the parent container is a draft. DELETE own allocations where the parent container is a draft. |
-
-The key invariant: **each `container_allocation` row is independently filtered by the master item's factory ownership.** A factory inside a mixed container sees only her own allocation rows — Factory B's allocations in the same container are simply not returned by Postgres. The container itself is visible (it has at least one of her allocations) but she can't browse what else is inside it.
-
-### Walkthrough — mixed draft container
-
-Internal creates draft Container X in scenario "Main" with two allocations: Factory A × 100 and Factory B × 200.
-
-- **Internal** sees Container X with both allocations.
-- **Factory A** sees Container X exists; sees her 100; does not see Factory B's 200.
-- **Factory B** sees Container X exists; sees her 200; does not see Factory A's 100.
-- Either factory can **add** her own allocations to Container X (the container is a draft).
-- Neither factory can remove the other's allocation, edit the container's name/type, or commit it.
-- Internal commits → both factories see the committed OFQ with their own line in it; cross-factory data remains hidden.
-
-### Walkthrough — factory's own scenario
-
-Factory A creates her own scenario "A's idea", with Container Y containing only her POs.
-
-- **Internal** sees the scenario and the container with all its contents (created_by = Factory A).
-- **Factory A** sees her scenario and container normally.
-- **Factory B** sees nothing — the scenario has no allocations referencing her POs and she didn't create it.
-- Internal can fork the scenario, modify, or commit Container Y directly to produce an OFQ.
-
----
-
-## Provenance (signatures)
-
-Every `scenario`, `container`, and `container_allocation` row carries `created_by` referencing `auth.users(id)`. Committed containers additionally carry `committed_by` for OFQ audit.
-
-UI surface:
-
-- **Scenario card**: *"forked from X · created by [name]"*.
-- **Container header**: *"draft by [name]"* or *"OFQ-2026-014 · committed by [name]"*.
-- **Allocation card**: small chip showing creator name (factory name or internal user). When internal reviews a draft, who-suggested-what is visible at a glance.
-
-For factory-created rows the displayed name is the factory name (from `profiles.factory_name`). For internal/admin, the user's display name.
+Everyone sees the same world. The social convention is *"internal has priority for arrangement; factories only rearrange when necessary."* The system permits any role to arrange because that flexibility is rarely abused and lets factories self-serve when internal isn't around.
 
 ---
 
@@ -303,73 +187,60 @@ For factory-created rows the displayed name is the factory name (from `profiles.
 ```ts
 interface PlannerStore {
   masterItems: MasterItem[]
-  scenarios: Scenario[]
-  containers: Container[]                 // both draft and committed in one collection
+  containers: Container[]                 // both draft and committed
   allocations: Allocation[]
 
-  currentScenarioId: string               // null = "no scenario", just committed view
+  // Container lifecycle
+  createContainer(args: { name; type; destination }): Promise<void>
+  deleteContainer(id: string): Promise<void>
+  emptyContainer(id: string): Promise<void>
+  commitContainer(id: string, ofqRef: string): Promise<void>
+  uncommitContainer(id: string): Promise<void>
+
+  // Allocation lifecycle
+  addAllocation(input: { containerId; masterItemId; quantity }): Promise<Allocation>
+  // ^ merges if (containerId, masterItemId) already exists
+  updateAllocation(id, quantity): Promise<void>
+  removeAllocation(id): Promise<void>
+
+  // Dialog UI state
+  allocationDialog: { open; mode: AllocationDialogMode | null }
+  commitDialog: { open; containerId: string | null }
+  openAllocationDialog(mode): void
+  closeAllocationDialog(): void
+  openCommitDialog(containerId): void
+  closeCommitDialog(): void
 
   // Derived
-  availableQty(scenarioId: string, masterItemId: string): number
-  staleDrafts(): Container[]
-
-  // Verbs
-  allocate(containerId: string, masterItemId: string, qty: number):
-    | { ok: true }
-    | { ok: false; reason: 'insufficient'; available: number }
-  emptyContainer(containerId: string): void
-  forkScenario(name: string, sourceId?: string): Promise<string>
-  commitContainer(containerId: string, ofqRef: string): Promise<void>
-  uncommitContainer(containerId: string, reason: string): Promise<void>
+  availableQty(masterItemId: string): number
+  containersHoldingItem(masterItemId: string): Container[]
 }
 ```
-
-Five verbs, each with one clear contract.
 
 ---
 
 ## UX
 
-- **Top-of-tray scenario switcher.** A simple dropdown. Default scenario "Main" always exists and can't be deleted. New scenarios appear with a `forked from X` lineage label.
-- **Committed containers pinned at the top of the tray**, in every scenario view, read-only, with their OFQ reference visible. They're reality — they don't disappear when you change scenarios.
-- **Draft containers below**, under the current scenario, with edit controls. *Empty / Delete / Commit* per card.
-- **Stale badge** on drafts where global availability has gone negative; tooltip names the offending master item.
-- **Commit confirmation modal** prompts for the OFQ reference (and lists the allocations being consumed).
-- **No side-by-side comparison view in MVP.** Flipping the dropdown is enough. Side-by-side comes later if needed.
+- **One shared tray.** Committed containers pin at the top (with OFQ reference + commit date). Drafts below. No scenario switcher.
+- **Add container** at the bottom: destination dropdown (distinct `shipTo` values), type select.
+- **Container card actions**: *Empty* (drafts with allocations) · *Delete* (drafts, two-click confirm) · *Commit OFQ* (drafts, admin/internal only) · *Uncommit* (committed, admin only).
+- **Allocation modal** opens on drag-drop and on click-to-edit. Shows: original, committed, allocated-in-drafts, available-for-this-draft. Numeric input bounded by `available + (editing ? existing : 0)`.
+- **Commit modal** asks for the OFQ reference (free text — your freight forwarder gives you the real number) and lists every allocation being locked in, with totals and effective cargo-ready date.
+- **Grid** shows the master items with `Available` and `Committed` columns. Rows where available=0 dim. Rows where committed=original disappear.
 
 ---
 
-## Design principles
+## What this model does not do (intentionally)
 
-The whole model rests on one test: **can the user always predict what their click will do, and does each verb solve one problem cleanly?**
-
-- Allocate → puts cases in a container.
-- Empty → removes cases from a container.
-- Commit → ships a container (creates an OFQ).
-- Fork → duplicates an exploration to vary it.
-- Delete → cleanup.
-
-Every workflow composes from these. No verb takes a flag that changes its kind. No verb secretly triggers another verb. No verb's name leaves the user guessing about scope.
-
----
-
-## Implications for CLAUDE.md
-
-Sections needing alignment with this model:
-
-1. **Permissions matrix** — factories CAN create scenarios, draft containers, and allocations against their own POs (with siloing). They cannot commit/uncommit.
-2. **Phase 4** — containers start empty; destination + type at creation; `created_by` recorded.
-3. **Phase 5.5** — allocation modal writes to a draft container; factory allocations gated to own PO lines.
-4. **Phase 5.6** — **"Scenarios and Exploration"**: scenario switcher, fork, empty. Factories can fork too; siloing applies to the resulting visibility.
-5. **Phase 7.5** — "Commit Container" with OFQ reference; per-container, not per-plan. Admin/Internal only.
-6. **Phase 12 schema** — tables `master_items`, `scenarios`, `containers`, `container_allocations`, `profiles`. RLS as in this doc.
+- **No branching / scenarios / forks.** Variations are explored by emptying a container and re-arranging it in place.
+- **No "who did what" signatures.** Real-time presence (Phase 12) is enough; an audit trail is over-engineering for the current workflow.
+- **No per-factory siloing of the planning view.** The shared view *is* the value proposition. Factory write access to master fields is still siloed (`cargo_ready` / CBM on own rows only).
 
 ---
 
 ## Open questions
 
-1. **OFQ reference format** — free-text (the freight forwarder's number, typed in) or system-generated (`OFQ-YYYY-NNN`)? Lean toward free-text since the real OFQ number originates externally.
-2. **Uncommit audit** — admin-only with a mandatory reason string? Recommend yes.
-3. **Scenario lifetime** — auto-archive after idle period, or pure manual? Manual is simpler; revisit only if scenario clutter becomes a real problem.
-4. **Container destination binding** — bound at creation (recommended; mixing destinations in one container is almost always a bug).
-5. **Empty container while stale-badged** — clear badge instantly, or wait for re-check? Instant is fine; it's derived state.
+- **OFQ reference format**: free text (current design — your forwarder controls it). Add validation later only if patterns emerge.
+- **Empty container UX**: currently a single-click action. Consider a one-step confirm if users empty by accident.
+- **Uncommit gating**: admin-only today. Loosen to internal if the team grows and admin becomes a bottleneck.
+- **Cross-container reorder** (Phase 6) — drag an allocation from Container A to Container B without going through the modal.

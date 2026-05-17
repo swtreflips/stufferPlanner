@@ -1,13 +1,7 @@
 import { createLocalAllocationRepo } from './LocalAllocationRepo'
 import { createLocalContainerRepo } from './LocalContainerRepo'
 import { createLocalMasterItemRepo } from './LocalMasterItemRepo'
-import { createLocalScenarioRepo } from './LocalScenarioRepo'
-import type {
-  AllocationRepo,
-  ContainerRepo,
-  MasterItemRepo,
-  ScenarioRepo,
-} from './types'
+import type { AllocationRepo, ContainerRepo, MasterItemRepo } from './types'
 
 const dataSource = import.meta.env.VITE_DATA_SOURCE ?? 'local'
 
@@ -20,15 +14,6 @@ function pickMasterItemRepo(): MasterItemRepo {
         `[repos] Unknown VITE_DATA_SOURCE "${dataSource}". Falling back to local.`,
       )
       return createLocalMasterItemRepo()
-  }
-}
-
-function pickScenarioRepo(): ScenarioRepo {
-  switch (dataSource) {
-    case 'local':
-      return createLocalScenarioRepo()
-    default:
-      return createLocalScenarioRepo()
   }
 }
 
@@ -51,7 +36,6 @@ function pickAllocationRepo(): AllocationRepo {
 }
 
 export const masterItemRepo = pickMasterItemRepo()
-export const scenarioRepo = pickScenarioRepo()
 export const containerRepo = pickContainerRepo()
 export const allocationRepo = pickAllocationRepo()
 
@@ -60,7 +44,5 @@ export type {
   ContainerRepo,
   CreateAllocationInput,
   CreateContainerInput,
-  CreateScenarioInput,
   MasterItemRepo,
-  ScenarioRepo,
 } from './types'

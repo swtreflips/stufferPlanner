@@ -4,7 +4,6 @@ export interface Allocation {
   masterItemId: string
   quantity: number
   displayOrder: number
-  createdBy: string
   createdAt: string
 }
 

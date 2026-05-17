@@ -36,9 +36,18 @@ const formatCbmCell = (params: { value: unknown }): string =>
 
 export default function OpenPoStatusReport() {
   const masterItems = usePlannerStore((s) => s.masterItems)
-  const currentScenarioId = usePlannerStore((s) => s.currentScenarioId)
   const availableQty = usePlannerStore((s) => s.availableQty)
   const allocations = usePlannerStore((s) => s.allocations)
+  const containers = usePlannerStore((s) => s.containers)
+
+  // Hide rows that are fully committed to OFQs — they have no further utility on the planning grid.
+  const visibleRows = useMemo(
+    () =>
+      masterItems.filter(
+        (m) => m.committedQuantity < m.originalQuantity,
+      ),
+    [masterItems],
+  )
 
   const gridApiRef = useRef<GridApi<MasterItem> | null>(null)
 
@@ -49,7 +58,7 @@ export default function OpenPoStatusReport() {
   useEffect(() => {
     gridApiRef.current?.refreshCells({ force: true })
     gridApiRef.current?.redrawRows()
-  }, [allocations, currentScenarioId])
+  }, [allocations, containers, masterItems])
 
   const columnDefs = useMemo<ColDef<MasterItem>[]>(
     () => [
@@ -71,11 +80,17 @@ export default function OpenPoStatusReport() {
       { field: 'shipTo', headerName: 'Ship To', width: 140 },
       { field: 'originalQuantity', headerName: 'Qty', width: 90, type: 'numericColumn' },
       {
+        field: 'committedQuantity',
+        headerName: 'Committed',
+        width: 110,
+        type: 'numericColumn',
+      },
+      {
         headerName: 'Available',
         width: 110,
         type: 'numericColumn',
         valueGetter: (params) =>
-          params.data ? availableQty(currentScenarioId, params.data.id) : null,
+          params.data ? availableQty(params.data.id) : null,
         cellClassRules: {
           'text-coral-accent font-semibold': (params) => params.value === 0,
         },
@@ -120,7 +135,7 @@ export default function OpenPoStatusReport() {
         valueFormatter: formatDateCell,
       },
     ],
-    [availableQty, currentScenarioId],
+    [availableQty],
   )
 
   const defaultColDef = useMemo<ColDef>(
@@ -134,15 +149,13 @@ export default function OpenPoStatusReport() {
 
   const getRowClass = (params: { data?: MasterItem }) => {
     if (!params.data) return undefined
-    return availableQty(currentScenarioId, params.data.id) === 0
-      ? 'opacity-50'
-      : undefined
+    return availableQty(params.data.id) === 0 ? 'opacity-50' : undefined
   }
 
   return (
     <div className="h-full w-full">
       <AgGridReact<MasterItem>
-        rowData={masterItems}
+        rowData={visibleRows}
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
         theme={stufferTheme}

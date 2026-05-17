@@ -7,38 +7,46 @@ import AddContainerDialog from './AddContainerDialog'
 export default function ContainerTray() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const containers = usePlannerStore((s) => s.containers)
-  const scenarios = usePlannerStore((s) => s.scenarios)
-  const currentScenarioId = usePlannerStore((s) => s.currentScenarioId)
 
-  const currentScenario = useMemo(
-    () => scenarios.find((s) => s.id === currentScenarioId) ?? null,
-    [scenarios, currentScenarioId],
-  )
-
-  const scenarioContainers = useMemo(
-    () =>
-      containers
-        .filter((c) => c.scenarioId === currentScenarioId)
-        .sort((a, b) => a.displayOrder - b.displayOrder),
-    [containers, currentScenarioId],
-  )
+  const { committed, drafts } = useMemo(() => {
+    const sorted = [...containers].sort((a, b) => a.displayOrder - b.displayOrder)
+    return {
+      committed: sorted.filter((c) => c.status === 'committed'),
+      drafts: sorted.filter((c) => c.status === 'draft'),
+    }
+  }, [containers])
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-6 py-3 border-b border-navy-200 bg-white">
         <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
-          Scenario
+          Containers
         </div>
         <div className="text-lg font-semibold text-navy-900">
-          {currentScenario?.name ?? 'Loading…'}
+          {committed.length} committed · {drafts.length} drafts
         </div>
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-3">
-        {scenarioContainers.length === 0 ? (
+        {committed.length === 0 && drafts.length === 0 ? (
           <EmptyState />
         ) : (
-          scenarioContainers.map((c) => <ContainerCard key={c.id} container={c} />)
+          <>
+            {committed.length > 0 ? (
+              <Section label="Committed (OFQs)">
+                {committed.map((c) => (
+                  <ContainerCard key={c.id} container={c} />
+                ))}
+              </Section>
+            ) : null}
+            {drafts.length > 0 ? (
+              <Section label="Drafts">
+                {drafts.map((c) => (
+                  <ContainerCard key={c.id} container={c} />
+                ))}
+              </Section>
+            ) : null}
+          </>
         )}
       </div>
 
@@ -46,8 +54,7 @@ export default function ContainerTray() {
         <button
           type="button"
           onClick={() => setDialogOpen(true)}
-          disabled={!currentScenarioId}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-navy-300 hover:border-amber-accent text-navy-500 hover:text-amber-accent text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-navy-300 hover:border-amber-accent text-navy-500 hover:text-amber-accent text-sm font-semibold transition-colors"
         >
           <Plus className="w-4 h-4" />
           Add container
@@ -57,9 +64,20 @@ export default function ContainerTray() {
       <AddContainerDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        defaultName={`Container ${scenarioContainers.length + 1}`}
+        defaultName={`Container ${drafts.length + committed.length + 1}`}
       />
     </div>
+  )
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400 px-1">
+        {label}
+      </div>
+      {children}
+    </section>
   )
 }
 
