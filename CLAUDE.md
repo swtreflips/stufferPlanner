@@ -285,7 +285,7 @@ src/
     plannerStore.ts
 
   types/
-    openPoItem.ts
+    masterItem.ts                     # MasterItem (renamed from openPoItem in Phase 4)
     container.ts                      # Container { status, scenarioId, ... }
     scenario.ts                       # Scenario (Phase 5.6)
     allocation.ts                     # Allocation (Phase 5.5)
@@ -319,10 +319,10 @@ src/
 
 # Data Models
 
-## Open PO Item
+## Master Item
 
 ```ts
-interface OpenPoItem {
+interface MasterItem {
   id: string;
   name: string;
   dateIssued: string;
@@ -332,16 +332,14 @@ interface OpenPoItem {
   status: string;
   lineId: number;
   sku: string;
-  quantityRemaining: number;
+  originalQuantity: number;
+  committedQuantity: number;
   cbm: number | null;
   cargoReady: string;
   etd: number | null;
   eta: string | null;
   cbmPerCase: number;
   cbmTotal: number;
-  container: string;
-  configGroup: string;
-  assignedContainerId: string | null;
   raw: Record<string, any>;
 }
 ```
@@ -506,7 +504,7 @@ whether the eventual Supabase swap is a one-day task or a one-week refactor.
    arrays. Start with a `LocalRepo` returning hardcoded data; Phase 12 adds a
    `SupabaseRepo`. No UI changes required at swap time. See Phase 2.5.
 
-9. **Schema decisions before Phase 12.** The current `OpenPoItem` uses string dates
+9. **Schema decisions before Phase 12.** The current `MasterItem` uses string dates
    and a `raw: Record<string, unknown>` blob. For Postgres:
    * Dates: store as `timestamptz`, not strings.
    * `raw` becomes a `jsonb` column.
@@ -915,7 +913,7 @@ and overwritten on each push.
 
 ### Deliverables
 
-* Documented row payload shape (matches `OpenPoItem` minus client-only fields
+* Documented row payload shape (matches `MasterItem` minus client-only fields
   like `id`, `raw`, `assignedContainerId`).
 * Push endpoint (PostgREST table or Edge Function) reachable with admin
   credentials / service role key.

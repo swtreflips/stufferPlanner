@@ -1,4 +1,4 @@
-export interface OpenPoItem {
+export interface MasterItem {
   id: string
   name: string
   dateIssued: string
@@ -8,7 +8,8 @@ export interface OpenPoItem {
   status: string
   lineId: number
   sku: string
-  quantityRemaining: number
+  originalQuantity: number
+  committedQuantity: number
   cbm: number | null
   cargoReady: string
   etd: number | null

@@ -1,14 +1,18 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import {
   AllCommunityModule,
   ModuleRegistry,
   themeQuartz,
   type ColDef,
+  type GridApi,
+  type GridReadyEvent,
+  type ICellRendererParams,
 } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
-import type { OpenPoItem } from '../../types/openPoItem'
+import type { MasterItem } from '../../types/masterItem'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
+import DraggableRowHandle from '../drag/DraggableRowHandle'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -31,16 +35,51 @@ const formatCbmCell = (params: { value: unknown }): string =>
   typeof params.value === 'number' ? params.value.toFixed(4) : ''
 
 export default function OpenPoStatusReport() {
-  const openPoItems = usePlannerStore((s) => s.openPoItems)
+  const masterItems = usePlannerStore((s) => s.masterItems)
+  const currentScenarioId = usePlannerStore((s) => s.currentScenarioId)
+  const availableQty = usePlannerStore((s) => s.availableQty)
+  const allocations = usePlannerStore((s) => s.allocations)
 
-  const columnDefs = useMemo<ColDef<OpenPoItem>[]>(
+  const gridApiRef = useRef<GridApi<MasterItem> | null>(null)
+
+  const onGridReady = (event: GridReadyEvent<MasterItem>) => {
+    gridApiRef.current = event.api
+  }
+
+  useEffect(() => {
+    gridApiRef.current?.refreshCells({ force: true })
+    gridApiRef.current?.redrawRows()
+  }, [allocations, currentScenarioId])
+
+  const columnDefs = useMemo<ColDef<MasterItem>[]>(
     () => [
+      {
+        headerName: '',
+        width: 36,
+        sortable: false,
+        filter: false,
+        resizable: false,
+        suppressMovable: true,
+        cellRenderer: (params: ICellRendererParams<MasterItem>) =>
+          params.data ? <DraggableRowHandle masterItem={params.data} /> : null,
+        cellStyle: { padding: 0 },
+      },
       { field: 'documentNumber', headerName: 'PO #', width: 110 },
       { field: 'lineId', headerName: 'Line', width: 70, type: 'numericColumn' },
       { field: 'sku', headerName: 'SKU', width: 160 },
       { field: 'name', headerName: 'Vendor', width: 130 },
       { field: 'shipTo', headerName: 'Ship To', width: 140 },
-      { field: 'quantityRemaining', headerName: 'Qty', width: 90, type: 'numericColumn' },
+      { field: 'originalQuantity', headerName: 'Qty', width: 90, type: 'numericColumn' },
+      {
+        headerName: 'Available',
+        width: 110,
+        type: 'numericColumn',
+        valueGetter: (params) =>
+          params.data ? availableQty(currentScenarioId, params.data.id) : null,
+        cellClassRules: {
+          'text-coral-accent font-semibold': (params) => params.value === 0,
+        },
+      },
       {
         field: 'cbmPerCase',
         headerName: 'CBM / case',
@@ -81,7 +120,7 @@ export default function OpenPoStatusReport() {
         valueFormatter: formatDateCell,
       },
     ],
-    [],
+    [availableQty, currentScenarioId],
   )
 
   const defaultColDef = useMemo<ColDef>(
@@ -93,16 +132,25 @@ export default function OpenPoStatusReport() {
     [],
   )
 
+  const getRowClass = (params: { data?: MasterItem }) => {
+    if (!params.data) return undefined
+    return availableQty(currentScenarioId, params.data.id) === 0
+      ? 'opacity-50'
+      : undefined
+  }
+
   return (
     <div className="h-full w-full">
-      <AgGridReact<OpenPoItem>
-        rowData={openPoItems}
+      <AgGridReact<MasterItem>
+        rowData={masterItems}
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
         theme={stufferTheme}
         headerHeight={40}
         rowHeight={34}
         animateRows
+        getRowClass={getRowClass}
+        onGridReady={onGridReady}
       />
     </div>
   )
