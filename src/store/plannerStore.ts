@@ -2,7 +2,15 @@ import { create } from 'zustand'
 import type { MasterItem } from '../types/masterItem'
 import type { Container, ContainerType } from '../types/container'
 import type { Allocation, AllocationDialogMode } from '../types/allocation'
-import { allocationRepo, containerRepo, masterItemRepo } from '../data/repos'
+import type { Profile } from '../types/profile'
+import type { Supplier } from '../types/supplier'
+import {
+  allocationRepo,
+  containerRepo,
+  masterItemRepo,
+  profileRepo,
+  supplierRepo,
+} from '../data/repos'
 
 interface CreateContainerArgs {
   name: string
@@ -30,6 +38,8 @@ interface PlannerStore {
   masterItems: MasterItem[]
   containers: Container[]
   allocations: Allocation[]
+  suppliers: Supplier[]
+  profiles: Profile[]
   allocationDialog: AllocationDialogState
   commitDialog: CommitDialogState
 
@@ -41,7 +51,7 @@ interface PlannerStore {
   updateAllocation(id: string, quantity: number): Promise<void>
   removeAllocation(id: string): Promise<void>
 
-  commitContainer(id: string, ofqReference: string): Promise<void>
+  commitContainer(id: string, ofqReference: string, committedBy: string): Promise<void>
   uncommitContainer(id: string): Promise<void>
 
   openAllocationDialog(mode: AllocationDialogMode): void
@@ -51,17 +61,22 @@ interface PlannerStore {
 
   availableQty(masterItemId: string): number
   containersHoldingItem(masterItemId: string): Container[]
+  displayNameById(userId: string | null): string
 }
 
 export const usePlannerStore = create<PlannerStore>((set, get) => {
   masterItemRepo.fetchAll().then((masterItems) => set({ masterItems }))
   containerRepo.fetchAll().then((containers) => set({ containers }))
   allocationRepo.fetchAll().then((allocations) => set({ allocations }))
+  supplierRepo.fetchAll().then((suppliers) => set({ suppliers }))
+  profileRepo.fetchAll().then((profiles) => set({ profiles }))
 
   return {
     masterItems: [],
     containers: [],
     allocations: [],
+    suppliers: [],
+    profiles: [],
     allocationDialog: { open: false, mode: null },
     commitDialog: { open: false, containerId: null },
 
@@ -123,7 +138,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       set((s) => ({ allocations: s.allocations.filter((a) => a.id !== id) }))
     },
 
-    async commitContainer(id, ofqReference) {
+    async commitContainer(id, ofqReference, committedBy) {
       const container = get().containers.find((c) => c.id === id)
       if (!container || container.status !== 'draft') return
       const containerAllocations = get().allocations.filter(
@@ -131,7 +146,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       )
       if (containerAllocations.length === 0) return
 
-      const committed = await containerRepo.commit(id, ofqReference)
+      const committed = await containerRepo.commit(id, ofqReference, committedBy)
 
       // Update master committedQuantity (in-memory + repo).
       const deltas: Record<string, number> = {}
@@ -216,6 +231,12 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
           .map((a) => a.containerId),
       )
       return get().containers.filter((c) => containerIdsWithItem.has(c.id))
+    },
+
+    displayNameById(userId) {
+      if (!userId) return ''
+      const profile = get().profiles.find((p) => p.id === userId)
+      return profile?.displayName ?? userId
     },
   }
 })

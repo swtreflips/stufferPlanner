@@ -36,11 +36,12 @@ export default function ContainerCard({ container }: Props) {
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
   const openCommitDialog = usePlannerStore((s) => s.openCommitDialog)
   const uncommitContainer = usePlannerStore((s) => s.uncommitContainer)
-  const { role } = useAuth()
+  const displayNameById = usePlannerStore((s) => s.displayNameById)
+  const { user } = useAuth()
 
   const isCommitted = container.status === 'committed'
-  const canCommit = role === 'admin' || role === 'internal'
-  const canUncommit = role === 'admin'
+  const canCommit = user.role === 'admin' || user.role === 'internal'
+  const canUncommit = user.role === 'admin'
 
   const [confirming, setConfirming] = useState(false)
 
@@ -150,6 +151,9 @@ export default function ContainerCard({ container }: Props) {
       {isCommitted && container.ofqReference ? (
         <div className="px-4 pb-2 text-[10px] font-mono uppercase tracking-widest text-teal-accent">
           {container.ofqReference}
+          {container.committedBy
+            ? ` · by ${displayNameById(container.committedBy)}`
+            : ''}
           {container.committedAt ? ` · ${formatDate(container.committedAt)}` : ''}
         </div>
       ) : null}

@@ -11,5 +11,6 @@ export interface Container {
   displayOrder: number
   ofqReference: string | null
   committedAt: string | null
+  committedBy: string | null
   createdAt: string
 }

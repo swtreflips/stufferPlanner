@@ -1,11 +1,22 @@
 import type { MasterItem } from '../../types/masterItem'
 import type { Container, ContainerType } from '../../types/container'
 import type { Allocation } from '../../types/allocation'
+import type { Supplier } from '../../types/supplier'
+import type { Profile } from '../../types/profile'
 
 export interface MasterItemRepo {
   fetchAll(): Promise<MasterItem[]>
   updateCargoReady(id: string, isoDate: string): Promise<void>
   commitQuantity(id: string, delta: number): Promise<void>
+}
+
+export interface SupplierRepo {
+  fetchAll(): Promise<Supplier[]>
+}
+
+export interface ProfileRepo {
+  fetchAll(): Promise<Profile[]>
+  findById(id: string): Promise<Profile | null>
 }
 
 export interface CreateContainerInput {
@@ -19,7 +30,7 @@ export interface ContainerRepo {
   fetchAll(): Promise<Container[]>
   create(input: CreateContainerInput): Promise<Container>
   delete(id: string): Promise<void>
-  commit(id: string, ofqReference: string): Promise<Container>
+  commit(id: string, ofqReference: string, committedBy: string): Promise<Container>
   uncommit(id: string): Promise<Container>
 }
 

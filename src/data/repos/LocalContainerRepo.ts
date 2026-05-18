@@ -22,6 +22,7 @@ export function createLocalContainerRepo(): ContainerRepo {
         displayOrder,
         ofqReference: null,
         committedAt: null,
+        committedBy: null,
         createdAt: now,
       }
       containers = [...containers, container]
@@ -30,7 +31,7 @@ export function createLocalContainerRepo(): ContainerRepo {
     async delete(id) {
       containers = containers.filter((c) => c.id !== id)
     },
-    async commit(id, ofqReference): Promise<Container> {
+    async commit(id, ofqReference, committedBy): Promise<Container> {
       const idx = containers.findIndex((c) => c.id === id)
       if (idx === -1) throw new Error(`commit: container ${id} not found`)
       const updated: Container = {
@@ -38,6 +39,7 @@ export function createLocalContainerRepo(): ContainerRepo {
         status: 'committed',
         ofqReference,
         committedAt: new Date().toISOString(),
+        committedBy,
       }
       containers = [
         ...containers.slice(0, idx),
@@ -54,6 +56,7 @@ export function createLocalContainerRepo(): ContainerRepo {
         status: 'draft',
         ofqReference: null,
         committedAt: null,
+        committedBy: null,
       }
       containers = [
         ...containers.slice(0, idx),

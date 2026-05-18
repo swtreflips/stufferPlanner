@@ -168,17 +168,88 @@ create function uncommit_container(container_id uuid) returns void;
 
 ---
 
-## RLS / multi-role
+## Identity & RLS
 
-Strict simplicity:
+User identity is anchored on three tables: `suppliers`, `profiles`, and the existing `auth.users` (Supabase Auth).
+
+```sql
+create table suppliers (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null unique,         -- "Ditar S.A", "Tejaswi Plastic Pvt Ltd."
+  created_at timestamptz not null default now()
+);
+
+create table profiles (
+  id           uuid primary key references auth.users(id) on delete cascade,
+  email        text not null unique,
+  display_name text not null,              -- "Mike", "Michelle", "Prasad"
+  role         text not null check (role in ('admin','internal','factory')),
+  supplier_id  uuid references suppliers(id),
+  created_at   timestamptz not null default now(),
+  constraint factory_has_supplier check (
+    (role = 'factory' and supplier_id is not null) or
+    (role in ('admin','internal') and supplier_id is null)
+  )
+);
+
+alter table master_items add column supplier_id uuid not null references suppliers(id);
+alter table containers   add column committed_by uuid references auth.users(id);
+```
+
+### Why a `suppliers` table (not domain mapping)
+
+Some suppliers — like Tejaswi's user on `prasad.tejaswiplastic@gmail.com` — use free email domains shared with millions of unrelated accounts. Domain → supplier mapping is unreliable. Explicit `profile.supplier_id` is the only safe answer. Bonus: supplier renames are one row update, and RLS becomes a clean uuid join instead of string matching.
+
+### Permissions matrix
 
 | Table | admin | internal | factory |
 |---|---|---|---|
-| `master_items` | full r/w | read all; no write to PO data | read all; UPDATE `cargo_ready`, `cbm_per_case`, `cbm_total` only on rows where `name = profiles.factory_name` |
+| `master_items` | full r/w | read all; no write to PO data | read **own supplier only**; UPDATE `cargo_ready`, `cbm_per_case`, `cbm_total` only on rows where `supplier_id = profile.supplier_id` |
 | `containers` (any status) | full r/w; commit/uncommit | full r/w; commit only (no uncommit) | read all; INSERT (draft); UPDATE (draft, non-commit fields); DELETE (draft); no commit/uncommit |
 | `container_allocations` | full r/w | full r/w | full r/w on rows in draft containers |
 
-Everyone sees the same world. The social convention is *"internal has priority for arrangement; factories only rearrange when necessary."* The system permits any role to arrange because that flexibility is rarely abused and lets factories self-serve when internal isn't around.
+Everyone sees the same containers world (drafts + committed). Only the master grid is supplier-filtered for factory users. The social convention remains *"internal has priority for arrangement; factories only rearrange when necessary."*
+
+### Commit signatures
+
+`containers.committed_by` is set by the `commit_container(uuid, text)` RPC **server-side** using `auth.uid()`, not client-supplied:
+
+```sql
+update containers
+set status = 'committed',
+    ofq_reference = $2,
+    committed_at = now(),
+    committed_by = auth.uid()
+where id = $1 and status = 'draft';
+```
+
+This makes the signature tamper-resistant. `uncommit_container(uuid)` (admin only) nulls `committed_by` along with the other commit fields and reverses the master `committed_quantity` deltas.
+
+### Sample RLS policies for `master_items`
+
+```sql
+create policy master_items_read on master_items for select using (
+  exists (
+    select 1 from profiles p
+    where p.id = auth.uid()
+      and (
+        p.role in ('admin','internal')
+        or (p.role = 'factory' and p.supplier_id = master_items.supplier_id)
+      )
+  )
+);
+
+create policy master_items_factory_update on master_items for update using (
+  exists (
+    select 1 from profiles p
+    where p.id = auth.uid()
+      and p.role = 'factory'
+      and p.supplier_id = master_items.supplier_id
+  )
+);
+```
+
+Column-level write restriction (factory can only touch `cargo_ready`, `cbm_per_case`, `cbm_total`) lives in a BEFORE UPDATE trigger that rejects writes to other columns when the caller's role is `factory`.
 
 ---
 

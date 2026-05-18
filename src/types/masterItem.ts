@@ -1,6 +1,7 @@
 export interface MasterItem {
   id: string
   name: string
+  supplierId: string
   dateIssued: string
   documentNumber: string
   shipTo: string

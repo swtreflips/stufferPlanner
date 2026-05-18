@@ -24,7 +24,7 @@ const gridLoadingFallback = (
 )
 
 export default function AppLayout() {
-  const { role } = useAuth()
+  const { user } = useAuth()
   const openPoCount = usePlannerStore((s) => s.masterItems.length)
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
 
@@ -72,9 +72,15 @@ export default function AppLayout() {
             <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-navy-800 text-navy-300 border border-navy-700">
               {openPoCount} open POs
             </span>
-            <span className="text-xs font-mono uppercase tracking-widest text-navy-300">
-              {role}
-            </span>
+            <div className="flex flex-col items-end">
+              <span className="text-xs font-semibold text-navy-100">
+                {user.displayName}
+              </span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
+                {user.role}
+                {user.supplierName ? ` · ${user.supplierName}` : ''}
+              </span>
+            </div>
           </div>
         </header>
         <SplitPane

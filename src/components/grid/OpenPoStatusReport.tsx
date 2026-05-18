@@ -10,6 +10,7 @@ import {
 } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
 import type { MasterItem } from '../../types/masterItem'
+import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
 import DraggableRowHandle from '../drag/DraggableRowHandle'
@@ -39,14 +40,19 @@ export default function OpenPoStatusReport() {
   const availableQty = usePlannerStore((s) => s.availableQty)
   const allocations = usePlannerStore((s) => s.allocations)
   const containers = usePlannerStore((s) => s.containers)
+  const { user } = useAuth()
 
-  // Hide rows that are fully committed to OFQs — they have no further utility on the planning grid.
+  // Hide fully-committed rows; for factory users, also restrict to their supplier.
   const visibleRows = useMemo(
     () =>
-      masterItems.filter(
-        (m) => m.committedQuantity < m.originalQuantity,
-      ),
-    [masterItems],
+      masterItems.filter((m) => {
+        if (m.committedQuantity >= m.originalQuantity) return false
+        if (user.role === 'factory' && user.supplierId) {
+          return m.supplierId === user.supplierId
+        }
+        return true
+      }),
+    [masterItems, user.role, user.supplierId],
   )
 
   const gridApiRef = useRef<GridApi<MasterItem> | null>(null)
@@ -73,12 +79,16 @@ export default function OpenPoStatusReport() {
           params.data ? <DraggableRowHandle masterItem={params.data} /> : null,
         cellStyle: { padding: 0 },
       },
-      { field: 'documentNumber', headerName: 'PO #', width: 110 },
-      { field: 'lineId', headerName: 'Line', width: 70, type: 'numericColumn' },
-      { field: 'sku', headerName: 'SKU', width: 160 },
-      { field: 'name', headerName: 'Vendor', width: 130 },
-      { field: 'shipTo', headerName: 'Ship To', width: 140 },
-      { field: 'originalQuantity', headerName: 'Qty', width: 90, type: 'numericColumn' },
+      { field: 'name', headerName: 'Name', width: 180 },
+      { field: 'documentNumber', headerName: 'Document Number', width: 150 },
+      { field: 'shipTo', headerName: 'Ship To', width: 150 },
+      { field: 'sku', headerName: 'Item', width: 170 },
+      {
+        field: 'originalQuantity',
+        headerName: 'Quantity Remaining',
+        width: 150,
+        type: 'numericColumn',
+      },
       {
         field: 'committedQuantity',
         headerName: 'Committed',
@@ -97,14 +107,14 @@ export default function OpenPoStatusReport() {
       },
       {
         field: 'cbmPerCase',
-        headerName: 'CBM / case',
-        width: 110,
+        headerName: 'CBM per Case',
+        width: 120,
         type: 'numericColumn',
         valueFormatter: formatCbmCell,
       },
       {
         field: 'cbmTotal',
-        headerName: 'CBM total',
+        headerName: 'Total CBM',
         width: 110,
         type: 'numericColumn',
         valueFormatter: formatCbmCell,
@@ -112,25 +122,6 @@ export default function OpenPoStatusReport() {
       {
         field: 'cargoReady',
         headerName: 'Cargo Ready',
-        width: 130,
-        valueFormatter: formatDateCell,
-      },
-      {
-        field: 'requestedShipBy',
-        headerName: 'Requested Ship',
-        width: 140,
-        valueFormatter: formatDateCell,
-      },
-      { field: 'etd', headerName: 'ETD (days)', width: 100, type: 'numericColumn' },
-      {
-        field: 'eta',
-        headerName: 'ETA',
-        width: 130,
-        valueFormatter: formatDateCell,
-      },
-      {
-        field: 'dateIssued',
-        headerName: 'Date Issued',
         width: 130,
         valueFormatter: formatDateCell,
       },

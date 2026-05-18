@@ -1,0 +1,16 @@
+Name,Date Issued,Document Number,Ship To,Requested Ship By,Status,Line ID,Name_1,Quantity Remaining,CBM per Case,Total CBM,Cargo Ready,ETD,ETA,Due Date/Receive By,Estimated delivery date,days late,EXPO,Container,Notes
+Ditar S.A,10/30/2025,PO155276,"Orlando, FL",1/15/2026,,1,LEVI-NK16616-MX,310,0.082,25.389,5/25/2026,1/18/2026,1/22/2026,2/6/2026,2/1/2026,-5,017,KOSU4941991,Shipped
+Ditar S.A,10/30/2025,PO155276,"Orlando, FL",1/15/2026,,2,LEVI-NK13613-MX,620,0.068,42.284,5/28/2026,1/18/2026,1/22/2026,2/6/2026,2/1/2026,-5,017,KOSU4941991,Shipped
+Ditar S.A,,PO154455,"Simi Valley, CA",,,,JKBR-NK13713,225,0.067,15.000,5/20/2026,,,,,,,,
+Ditar S.A,,PO154501,"Simi Valley, CA",,,,TCCF-NK10712 ,432,0.046,20.000,5/20/2026,,,,,,,,
+Ditar S.A,,PO154503,"Simi Valley, CA",,,,TCCF-NK10712,648,0.046,30.000,5/23/2026,,,,,,,,
+Ditar S.A,,PO154500,"Simi Valley, CA",,,,URTH-NK141015 ,300,0.070,21.000,5/20/2026,,,,,,,,
+Ditar S.A,,PO154511,"Simi Valley, CA",,,,BIAG-NK13713,300,0.063,19.000,5/20/2026,,,,,,,,
+Ditar S.A,,PO154512,"Simi Valley, CA",,,,BGMP-NK10712,612,0.054,33.000,5/28/2026,,,,,,,,
+Ditar S.A,,PO154515,"Simi Valley, CA",,,,NK121012 ,1000,0.056,56.000,5/20/2026,,,,,,,,
+Ditar S.A,,PO154516,"Simi Valley, CA",,,,NK121012 ,1000,0.056,56.000,5/20/2026,,,,,,,,
+Ditar S.A,,PO154517,"Simi Valley, CA",,,,ALAD-NK121012,300,0.057,17.000,5/20/2026,,,,,,,,
+Tejaswi Plastic Pvt Ltd.,45716,PO154134,"Cincinnati, OH",,,,CDTS-NK13713,1315,0.054,70.907,5/21/2026,,,,,,,,
+Tejaswi Plastic Pvt Ltd.,45726,PO154147,"Lakeland, FL",,,,CHDR-NK151017,900,0.056,50.400,5/29/2026,,,,,,,,
+Tejaswi Plastic Pvt Ltd.,45726,PO154148,"Carrollton, TX",,,,CHDR-NK151017,900,0.056,50.400,5/21/2026,,,,,,,,
+Tejaswi Plastic Pvt Ltd.,45741,PO154193,"Simi Valley, CA",,,,URTH-NK141015,200,0.057,11.333,5/21/2026,,,,,,,,

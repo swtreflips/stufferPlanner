@@ -19,8 +19,10 @@ live tray of draft and committed containers + the master PO grid. Anyone can dra
 rows into containers and arrange the plan; the social convention is that internal
 has priority for arrangement and factories only rearrange when necessary. **Only
 internal/admin can commit** a container (turn a draft into an OFQ that reduces
-master availability). The planning model is specified in
-[CONTCONFIG.md](CONTCONFIG.md).
+master availability). Each user is linked to a `supplier_id` via the `profiles`
+table (factory users only); RLS scopes the master grid to that supplier. The
+planning model is specified in [CONTCONFIG.md](CONTCONFIG.md); the identity /
+RLS model is in [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS".
 
 * **Admin** -- the developer/maintainer of the app (a single role-holder -- the
   user). Owns the deployment, schema, and master data ingestion (backend API
@@ -63,7 +65,7 @@ Master data ingestion (`master_items` table) is separate from the UI permission
 model: admin pushes master data system-to-system via the Phase 11 API path, not
 through any in-app upload action.
 
-For the MVP / development phase, the CSV data from `stufferplannertemplate.csv` should be **hardcoded as sample data** so the app can be built and tested without requiring a file upload flow. In production, data ingestion will eventually move to an API push.
+For the MVP / development phase, the CSV data from `plannerData.csv` should be **hardcoded as sample data** so the app can be built and tested without requiring a file upload flow. In production, data ingestion will eventually move to an API push.
 
 ---
 
@@ -98,7 +100,7 @@ The screen is divided into two sections:
 
 ## Data Ingestion
 
-* **MVP:** Sample data is hardcoded from `stufferplannertemplate.csv` (Phase 2).
+* **MVP:** Sample data is hardcoded from `plannerData.csv` (Phase 2).
 * **Production paths:**
   * **Admin:** master data pushed via backend API (Phase 11) -- system-to-system,
     no admin-facing CSV upload UI.
@@ -149,29 +151,32 @@ The screen is divided into two sections:
 
 # Sample Data Schema
 
-The hardcoded sample data comes from `stufferplannertemplate.csv` with these columns:
+The hardcoded sample data comes from `plannerData.csv`. The CSV contains 20+ raw
+columns; only the ones below are surfaced on the planning grid. Everything else
+flows through to `MasterItem.raw` for forward-compat with future API ingestion.
 
-| Column              | Description                                      |
-|---------------------|--------------------------------------------------|
-| Name                | Factory / vendor name (e.g. "Ditar S.A")         |
-| Date Issued         | Date the PO was issued (Excel serial number)     |
-| Document Number     | Purchase order number (e.g. "PO155049")          |
-| Ship To             | Destination address (e.g. "Simi Valley, CA")     |
-| Requested Ship By   | Requested shipping date (Excel serial number)    |
-| Status              | Order status                                     |
-| Line ID             | Line item number within the PO                   |
-| Name_1              | SKU / product code (e.g. "CFLF-WT10712")         |
-| Quantity Remaining  | Units remaining to ship                          |
-| CBM                 | Cubic meters (may be empty)                      |
-| Cargo Ready         | Date cargo is ready (Excel serial -- editable by factory) |
-| ETD                 | Estimated transit days                           |
-| ETA                 | Estimated arrival                                |
-| CBM per case        | CBM per individual case                          |
-| CBM total           | Total CBM for the line (Quantity * CBM per case) |
-| Container           | Container assignment (empty until assigned)      |
-| Column1             | Illustrative tag (`core`, `configA`, `configB`) from the legacy spreadsheet showing two example container fills. Not consumed by the app -- preserved here for historical reference only. |
+**Displayed columns** (in order):
 
-**Note:** Date fields stored as Excel serial numbers must be converted to human-readable dates when displayed.
+| Column              | Source field          | Notes |
+|---------------------|-----------------------|-------|
+| Name                | `name`                | Supplier / vendor (e.g. "Ditar S.A", "Tejaswi Plastic Pvt Ltd."). One PO is issued to one supplier; suppliers have no relationship with each other. |
+| Document Number     | `documentNumber`      | Purchase order number (e.g. "PO155276"). |
+| Ship To             | `shipTo`              | Destination (e.g. "Orlando, FL", "Simi Valley, CA"). |
+| Item                | `sku`                 | SKU / product code. Maps to the CSV's `Name_1` column. |
+| Quantity Remaining  | `originalQuantity`    | Master quantity at app boot. Only `Commit` mutates the balance via `committedQuantity`. |
+| Committed           | `committedQuantity`   | Derived from commit operations across containers. |
+| Available           | (derived selector)    | `originalQuantity − committedQuantity − sum(allocations in drafts)`. |
+| CBM per Case        | `cbmPerCase`          | Cubic meters per case. |
+| Total CBM           | `cbmTotal`            | Total CBM for the line. Taken **directly** from the CSV — does **not** always equal `cbmPerCase × quantity` due to source rounding. Treat CSV as authoritative. |
+| Cargo Ready         | `cargoReady`          | Factory-editable in Phase 10. |
+
+**Other columns ignored on the grid** but preserved in `raw`: Date Issued, Requested Ship By, Status, Line ID, ETD, ETA, Due Date/Receive By, Estimated delivery date, days late, EXPO, Container, Notes.
+
+**Note on dates:** the CSV mixes formats — m/d/yyyy strings (Ditar rows) and Excel serial numbers (Tejaswi rows) in the same `Date Issued` column. The sample-data parser normalizes the displayed dates to ISO. For the columns we surface today, only `Cargo Ready` is shown and it is m/d/yyyy across the dataset.
+
+**Note on Line ID:** most rows have a blank `Line ID` (single-line POs). The parser defaults missing line IDs to `1` so that `${documentNumber}-${lineId}` remains a stable unique key.
+
+**Companion seeds:** [src/data/sampleData.ts](src/data/sampleData.ts) also exports `sampleSuppliers` (Ditar + Tejaswi) and `sampleProfiles` (Mike admin, Internal, Michelle/Ditar, Prasad/Tejaswi). Every master item is linked to a supplier via `supplierId`. These drive both the placeholder `AuthProvider` and the supplier-scoped grid filter for factory users. The shape mirrors the Phase 12 `suppliers` and `profiles` tables — the swap is one-for-one.
 
 ---
 
@@ -492,19 +497,20 @@ whether the eventual Supabase swap is a one-day task or a one-week refactor.
    and a `raw: Record<string, unknown>` blob. For Postgres:
    * Dates: store as `timestamptz`, not strings.
    * `raw` becomes a `jsonb` column.
-   * Tables: `master_items` (renamed from `open_po_items`), `containers`,
-     `container_allocations`, `profiles` (with
-     `role: 'admin' | 'internal' | 'factory'` and `factory_name` for RLS).
-     Full schema in [CONTCONFIG.md](CONTCONFIG.md) "Schema".
+   * Tables: `suppliers`, `profiles`, `master_items` (renamed from
+     `open_po_items`; gains `supplier_id` FK), `containers` (gains
+     `committed_by` FK to `auth.users`), `container_allocations`.
+     Full DDL in [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS".
 
-10. **RLS is the security boundary, not the UI.** The three-role split is
-    meaningless without Row Level Security policies in Postgres. Everyone
-    reads everything; writes are gated by role and (for `master_items`) by
-    factory ownership. Editable fields for factories on `master_items`:
-    `cargo_ready`, `cbm_per_case`, `cbm_total` on rows where
-    `name = profiles.factory_name`. Commit/uncommit gated to internal/admin.
-    See Phase 12 sub-task 2 and [CONTCONFIG.md](CONTCONFIG.md) "RLS /
-    multi-role" for the canonical spec.
+10. **RLS is the security boundary, not the UI.** Suppliers are a first-class
+    entity (`suppliers` table). Each profile carries `supplier_id` for
+    factory users; admin/internal have `supplier_id IS NULL`. Factory RLS is a
+    uuid join, not a string match — Tejaswi's user on `prasad.tejaswiplastic@gmail.com`
+    is one reason domain-based mapping isn't viable. Editable fields for
+    factories on `master_items`: `cargo_ready`, `cbm_per_case`, `cbm_total` on
+    rows where `supplier_id = profile.supplier_id`. Commit/uncommit gated to
+    internal/admin (uncommit admin-only). See [CONTCONFIG.md](CONTCONFIG.md)
+    "Identity & RLS" for the canonical spec.
 
 ## Application Structure
 
@@ -517,7 +523,7 @@ whether the eventual Supabase swap is a one-day task or a one-week refactor.
     correctly today; the provider's internal implementation gets swapped for Supabase
     Auth in Phase 12.
 
-13. **Move the sample CSV to a real seed.** `stufferPlannertemplate.csv` is fine as
+13. **Move the sample CSV to a real seed.** `plannerData.csv` is fine as
     the source of truth for Phase 2 sample data. Plan for `supabase/seed.sql` (or a
     Node import script) so the same data can populate a real DB without copy-paste.
 
@@ -527,7 +533,7 @@ whether the eventual Supabase swap is a one-day task or a one-week refactor.
 
 Goal:
 
-* Create `sampleData.ts` with rows from `stufferplannertemplate.csv`.
+* Create `sampleData.ts` with rows from `plannerData.csv`.
 * Convert Excel serial dates to readable dates.
 * Store data in Zustand.
 
@@ -840,7 +846,7 @@ and overwritten on each push.
   like `id`, `raw`, `assignedContainerId`).
 * Push endpoint (PostgREST table or Edge Function) reachable with admin
   credentials / service role key.
-* `scripts/seed.ts` (Node) that reads `stufferPlannertemplate.csv` and emits
+* `scripts/seed.ts` (Node) that reads `plannerData.csv` and emits
   the JSON the endpoint accepts -- exercises the same path for dev/staging
   reproducibility.
 
@@ -861,24 +867,28 @@ prevent that.
 Sub-tasks:
 
 1. **Schema migration.** Create `supabase/migrations/0001_init.sql` with
-   `master_items`, `containers`, `container_allocations`, and `profiles`
-   tables. Dates as `timestamptz`, `raw` as `jsonb`. Full DDL in
-   [CONTCONFIG.md](CONTCONFIG.md) "Schema".
+   `suppliers`, `profiles`, `master_items` (with `supplier_id` FK),
+   `containers` (with `committed_by` FK), and `container_allocations` tables.
+   Dates as `timestamptz`, `raw` as `jsonb`. Full DDL in
+   [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS".
 
 2. **RLS policies.** Enable RLS on all tables. Full policy spec in
-   [CONTCONFIG.md](CONTCONFIG.md) "RLS / multi-role". Summary:
+   [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS". Summary:
    * `admin` and `internal`: full read/write; both can commit, only admin can
      uncommit.
-   * `factory` on `master_items`: `SELECT` all rows; `UPDATE` only
-     `cargo_ready`, `cbm_per_case`, `cbm_total` where `name = profiles.factory_name`.
+   * `factory` on `master_items`: `SELECT` and `UPDATE` only rows where
+     `supplier_id = profile.supplier_id`; updatable columns restricted to
+     `cargo_ready`, `cbm_per_case`, `cbm_total` via a BEFORE UPDATE trigger.
    * `factory` on `containers`: `SELECT` all; INSERT / DELETE / UPDATE on
      drafts only; no commit / uncommit.
    * `factory` on `container_allocations`: `SELECT` all; full CRUD on rows
      attached to draft containers.
 
-3. **Auth wiring.** Replace the placeholder `AuthProvider` from the deployment
-   scaffolding with a real Supabase session. Email or magic-link login. Role read
-   from the `profiles` table.
+3. **Auth wiring.** Replace the placeholder `AuthProvider` (which currently
+   resolves the placeholder profile by URL: `/admin`, `/internal`,
+   `/factory/:supplierSlug`) with a real Supabase session. Email or magic-link
+   login. Profile row fetched on session; the `AuthContextValue` shape is
+   identical, so consumers don't change.
 
 4. **`SupabaseRepo` implementation.** New files implementing the Phase 2.5 repo
    interfaces (`MasterItemRepo`, `ContainerRepo`, `AllocationRepo`) using
@@ -894,7 +904,7 @@ Sub-tasks:
    `uncommit_container`. Bodies sketched in [CONTCONFIG.md](CONTCONFIG.md)
    "Backend operations".
 
-7. **Seed data.** Port `stufferPlannertemplate.csv` into `supabase/seed.sql` so
+7. **Seed data.** Port `plannerData.csv` into `supabase/seed.sql` so
    dev/staging databases are populated reproducibly.
 
 Deliverables:

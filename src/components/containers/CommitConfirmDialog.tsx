@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { FileCheck2, X } from 'lucide-react'
+import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
 
@@ -12,6 +13,7 @@ export default function CommitConfirmDialog() {
   const allocations = usePlannerStore((s) => s.allocations)
   const masterItems = usePlannerStore((s) => s.masterItems)
   const commitContainer = usePlannerStore((s) => s.commitContainer)
+  const { user } = useAuth()
 
   const onOpenChange = (next: boolean) => {
     if (!next) closeCommitDialog()
@@ -68,7 +70,7 @@ export default function CommitConfirmDialog() {
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      await commitContainer(container.id, ofqReference.trim())
+      await commitContainer(container.id, ofqReference.trim(), user.id)
       closeCommitDialog()
     } finally {
       setSubmitting(false)
@@ -142,6 +144,9 @@ export default function CommitConfirmDialog() {
           </dl>
 
           <form onSubmit={handleSubmit} className="px-5 py-4 border-t border-navy-100 space-y-3">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-navy-500">
+              Committing as <span className="text-navy-900">{user.displayName}</span>
+            </div>
             <label className="block">
               <span className="block text-[10px] font-mono uppercase tracking-widest text-navy-400 mb-1.5">
                 OFQ reference
