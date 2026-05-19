@@ -20,9 +20,11 @@ export interface ProfileRepo {
 }
 
 export interface CreateContainerInput {
+  code: string
   name: string
   type: ContainerType
   destination: string
+  supplierId: string
   displayOrder?: number
 }
 
@@ -45,6 +47,7 @@ export interface AllocationRepo {
   fetchAll(): Promise<Allocation[]>
   create(input: CreateAllocationInput): Promise<Allocation>
   update(id: string, quantity: number): Promise<void>
+  updateContainerId(id: string, newContainerId: string): Promise<void>
   delete(id: string): Promise<void>
   deleteByContainerId(containerId: string): Promise<void>
 }

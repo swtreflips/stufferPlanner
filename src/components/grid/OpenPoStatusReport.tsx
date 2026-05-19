@@ -10,6 +10,7 @@ import {
 } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
 import type { MasterItem } from '../../types/masterItem'
+import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
@@ -40,6 +41,9 @@ export default function OpenPoStatusReport() {
   const availableQty = usePlannerStore((s) => s.availableQty)
   const allocations = usePlannerStore((s) => s.allocations)
   const containers = usePlannerStore((s) => s.containers)
+  const isLockedByOther = usePlannerStore((s) => s.isLockedByOther)
+  const acquireLock = usePlannerStore((s) => s.acquireLock)
+  const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
   const { user } = useAuth()
 
   // Hide fully-committed rows; for factory users, also restrict to their supplier.
@@ -143,6 +147,18 @@ export default function OpenPoStatusReport() {
     return availableQty(params.data.id) === 0 ? 'opacity-50' : undefined
   }
 
+  const handleRowDoubleClick = (event: { data?: MasterItem }) => {
+    const item = event.data
+    if (!item) return
+    if (availableQty(item.id) === 0) return
+    const resourceId = masterLockId(item.id)
+    if (isLockedByOther(resourceId)) return
+    if (!acquireLock(resourceId, { id: user.id, displayName: user.displayName })) {
+      return
+    }
+    openAllocationDialog({ kind: 'create', masterItemId: item.id })
+  }
+
   return (
     <div className="h-full w-full">
       <AgGridReact<MasterItem>
@@ -155,6 +171,7 @@ export default function OpenPoStatusReport() {
         animateRows
         getRowClass={getRowClass}
         onGridReady={onGridReady}
+        onRowDoubleClicked={handleRowDoubleClick}
       />
     </div>
   )

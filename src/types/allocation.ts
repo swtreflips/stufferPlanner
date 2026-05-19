@@ -8,5 +8,5 @@ export interface Allocation {
 }
 
 export type AllocationDialogMode =
-  | { kind: 'create'; containerId: string; masterItemId: string }
+  | { kind: 'create'; masterItemId: string; containerId?: string }
   | { kind: 'edit'; allocationId: string }

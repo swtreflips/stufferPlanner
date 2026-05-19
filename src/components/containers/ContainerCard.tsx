@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useDndContext, useDroppable } from '@dnd-kit/core'
 import { CheckCircle2, FileCheck2, MapPin, RotateCcw, Trash2 } from 'lucide-react'
 import type { Container } from '../../types/container'
+import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
@@ -11,21 +12,16 @@ interface Props {
   container: Container
 }
 
-interface DraggedMasterItemData {
-  type: 'masterItem'
-  masterItemId: string
-  shipTo: string
-  sku: string
-  documentNumber: string
-  lineId: number
+interface DraggedItemData {
+  type: 'masterItem' | 'allocation'
+  shipTo?: string
+  supplierId?: string
 }
 
-function isMasterItemDragData(data: unknown): data is DraggedMasterItemData {
-  return (
-    typeof data === 'object' &&
-    data !== null &&
-    (data as { type?: unknown }).type === 'masterItem'
-  )
+function isPlannerDragData(data: unknown): data is DraggedItemData {
+  if (typeof data !== 'object' || data === null) return false
+  const t = (data as { type?: unknown }).type
+  return t === 'masterItem' || t === 'allocation'
 }
 
 export default function ContainerCard({ container }: Props) {
@@ -37,7 +33,16 @@ export default function ContainerCard({ container }: Props) {
   const openCommitDialog = usePlannerStore((s) => s.openCommitDialog)
   const uncommitContainer = usePlannerStore((s) => s.uncommitContainer)
   const displayNameById = usePlannerStore((s) => s.displayNameById)
+  const acquireLock = usePlannerStore((s) => s.acquireLock)
+  const isLockedByOther = usePlannerStore((s) => s.isLockedByOther)
   const { user } = useAuth()
+  const [denial, setDenial] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!denial) return
+    const t = setTimeout(() => setDenial(null), 3000)
+    return () => clearTimeout(t)
+  }, [denial])
 
   const isCommitted = container.status === 'committed'
   const canCommit = user.role === 'admin' || user.role === 'internal'
@@ -76,16 +81,23 @@ export default function ContainerCard({ container }: Props) {
       type: 'container',
       containerId: container.id,
       destination: container.destination,
+      supplierId: container.supplierId,
     },
   })
 
   const { active } = useDndContext()
   const activeData = active?.data.current
-  const draggedShipTo = isMasterItemDragData(activeData) ? activeData.shipTo : null
+  const dragInfo = isPlannerDragData(activeData) ? activeData : null
   const destinationMatches =
-    draggedShipTo === null || draggedShipTo === container.destination
-  const showDropAffordance =
-    !isCommitted && active !== null && isMasterItemDragData(activeData)
+    dragInfo === null ||
+    dragInfo.shipTo === undefined ||
+    dragInfo.shipTo === container.destination
+  const supplierMatches =
+    dragInfo === null ||
+    dragInfo.supplierId === undefined ||
+    dragInfo.supplierId === container.supplierId
+  const compatibleDrop = destinationMatches && supplierMatches
+  const showDropAffordance = !isCommitted && active !== null && dragInfo !== null
 
   useEffect(() => {
     if (!confirming) return
@@ -117,7 +129,7 @@ export default function ContainerCard({ container }: Props) {
     ? 'border-teal-accent/40'
     : !showDropAffordance
       ? 'border-navy-200 hover:border-navy-300'
-      : !destinationMatches
+      : !compatibleDrop
         ? isOver
           ? 'border-coral-accent bg-coral-accent/5'
           : 'border-coral-accent/30 bg-coral-accent/5'
@@ -132,9 +144,10 @@ export default function ContainerCard({ container }: Props) {
     >
       <header className="flex items-start justify-between gap-2 p-4 pb-2">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-navy-900 truncate">
-            {container.name}
+          <h3 className="text-base font-bold font-mono tracking-wide text-navy-900">
+            {container.code}
           </h3>
+          <div className="text-xs text-navy-500 truncate">{container.name}</div>
           <div className="mt-1 flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-navy-400">
             <span className="px-1.5 py-0.5 rounded bg-navy-100 text-navy-700">
               {container.type}
@@ -159,9 +172,11 @@ export default function ContainerCard({ container }: Props) {
       ) : null}
 
       <div className="px-4 py-3 border-t border-navy-100 min-h-[3.5rem]">
-        {showDropAffordance && !destinationMatches ? (
+        {showDropAffordance && !compatibleDrop ? (
           <div className="text-xs italic text-coral-accent">
-            Destination doesn't match (this container is for {container.destination}).
+            {!destinationMatches
+              ? `Destination doesn't match (this container is for ${container.destination}).`
+              : `Supplier doesn't match (this container is bound to one supplier).`}
           </div>
         ) : allocations.length === 0 ? (
           <div className="text-xs italic text-navy-400">No allocations</div>
@@ -178,11 +193,25 @@ export default function ContainerCard({ container }: Props) {
                     onClick={
                       isCommitted
                         ? undefined
-                        : () =>
+                        : () => {
+                            const resourceId = masterLockId(item.id)
+                            const blocker = isLockedByOther(resourceId)
+                            if (blocker) {
+                              setDenial(
+                                `${blocker.displayName} is editing this row — try again in a moment.`,
+                              )
+                              return
+                            }
+                            const acquired = acquireLock(resourceId, {
+                              id: user.id,
+                              displayName: user.displayName,
+                            })
+                            if (!acquired) return
                             openAllocationDialog({
                               kind: 'edit',
                               allocationId: a.id,
                             })
+                          }
                     }
                   />
                 </li>
@@ -190,6 +219,9 @@ export default function ContainerCard({ container }: Props) {
             })}
           </ul>
         )}
+        {denial ? (
+          <div className="mt-2 text-[10px] text-coral-accent">{denial}</div>
+        ) : null}
         <div className="mt-2 text-[10px] font-mono uppercase tracking-widest text-navy-500">
           {metrics.lines} lines · {metrics.totalCbm.toFixed(2)} m³ · {metrics.totalQty} cases
           {metrics.maxCargoReady ? ` · ready ${formatDate(metrics.maxCargoReady)}` : ''}

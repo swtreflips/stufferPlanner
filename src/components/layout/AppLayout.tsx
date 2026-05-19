@@ -5,15 +5,19 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  type DragCancelEvent,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
 import SplitPane from './SplitPane'
+import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import ContainerTray from '../containers/ContainerTray'
 import DragOverlayRenderer from '../drag/DragOverlayRenderer'
 import AllocationDialog from '../containers/AllocationDialog'
 import CommitConfirmDialog from '../containers/CommitConfirmDialog'
+import PresenceManager from '../presence/PresenceManager'
 
 const OpenPoStatusReport = lazy(() => import('../grid/OpenPoStatusReport'))
 
@@ -23,41 +27,109 @@ const gridLoadingFallback = (
   </div>
 )
 
+interface DraggedItemData {
+  type: 'masterItem' | 'allocation'
+  masterItemId?: string
+  allocationId?: string
+  shipTo?: string
+  supplierId?: string
+  sourceContainerId?: string
+}
+
+interface DropTargetData {
+  type?: string
+  containerId?: string
+  destination?: string
+  supplierId?: string
+}
+
 export default function AppLayout() {
   const { user } = useAuth()
   const openPoCount = usePlannerStore((s) => s.masterItems.length)
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
+  const moveAllocation = usePlannerStore((s) => s.moveAllocation)
+  const acquireLock = usePlannerStore((s) => s.acquireLock)
+  const releaseLock = usePlannerStore((s) => s.releaseLock)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   )
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over) return
-    const activeData = active.data.current as
-      | { type?: string; masterItemId?: string; shipTo?: string }
-      | undefined
-    const overData = over.data.current as
-      | { type?: string; containerId?: string; destination?: string }
-      | undefined
-    if (activeData?.type !== 'masterItem' || overData?.type !== 'container') return
-    if (
-      !activeData.masterItemId ||
-      !overData.containerId ||
-      activeData.shipTo !== overData.destination
-    ) {
-      return
-    }
-    openAllocationDialog({
-      kind: 'create',
-      containerId: overData.containerId,
-      masterItemId: activeData.masterItemId,
+  const handleDragStart = (event: DragStartEvent) => {
+    const data = event.active.data.current as DraggedItemData | undefined
+    if (!data?.masterItemId) return
+    acquireLock(masterLockId(data.masterItemId), {
+      id: user.id,
+      displayName: user.displayName,
     })
   }
 
+  const releaseForActive = (data: DraggedItemData | undefined) => {
+    if (data?.masterItemId) releaseLock(masterLockId(data.masterItemId))
+  }
+
+  const handleDragCancel = (event: DragCancelEvent) => {
+    releaseForActive(event.active.data.current as DraggedItemData | undefined)
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    const activeData = active.data.current as DraggedItemData | undefined
+    const overData = over?.data.current as DropTargetData | undefined
+
+    if (!over || overData?.type !== 'container' || !overData.containerId) {
+      releaseForActive(activeData)
+      return
+    }
+
+    if (activeData?.type === 'masterItem') {
+      if (
+        !activeData.masterItemId ||
+        activeData.shipTo !== overData.destination ||
+        (activeData.supplierId &&
+          overData.supplierId &&
+          activeData.supplierId !== overData.supplierId)
+      ) {
+        releaseForActive(activeData)
+        return
+      }
+      // Valid create-drop: leave the lock held; AllocationDialog releases on close.
+      openAllocationDialog({
+        kind: 'create',
+        containerId: overData.containerId,
+        masterItemId: activeData.masterItemId,
+      })
+      return
+    }
+
+    if (activeData?.type === 'allocation') {
+      if (
+        !activeData.allocationId ||
+        !activeData.sourceContainerId ||
+        activeData.shipTo !== overData.destination ||
+        activeData.sourceContainerId === overData.containerId ||
+        (activeData.supplierId &&
+          overData.supplierId &&
+          activeData.supplierId !== overData.supplierId)
+      ) {
+        releaseForActive(activeData)
+        return
+      }
+      void moveAllocation(activeData.allocationId, overData.containerId)
+      releaseForActive(activeData)
+      return
+    }
+
+    releaseForActive(activeData)
+  }
+
   return (
-    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
       <div className="h-screen w-screen flex flex-col bg-navy-50">
         <header className="flex items-center justify-between px-6 py-3 bg-navy-900 border-b border-navy-700">
           <div className="flex items-center gap-3">
@@ -97,6 +169,7 @@ export default function AppLayout() {
       </DragOverlay>
       <AllocationDialog />
       <CommitConfirmDialog />
+      <PresenceManager />
     </DndContext>
   )
 }

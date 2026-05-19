@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Package, X } from 'lucide-react'
+import { masterLockId } from '../../types/lock'
 import { usePlannerStore } from '../../store/plannerStore'
 
 export default function AllocationDialog() {
   const open = usePlannerStore((s) => s.allocationDialog.open)
   const mode = usePlannerStore((s) => s.allocationDialog.mode)
   const closeAllocationDialog = usePlannerStore((s) => s.closeAllocationDialog)
-  const onOpenChange = (next: boolean) => {
-    if (!next) closeAllocationDialog()
-  }
   const masterItems = usePlannerStore((s) => s.masterItems)
   const allocations = usePlannerStore((s) => s.allocations)
   const containers = usePlannerStore((s) => s.containers)
@@ -17,6 +15,44 @@ export default function AllocationDialog() {
   const addAllocation = usePlannerStore((s) => s.addAllocation)
   const updateAllocation = usePlannerStore((s) => s.updateAllocation)
   const removeAllocation = usePlannerStore((s) => s.removeAllocation)
+  const releaseLock = usePlannerStore((s) => s.releaseLock)
+  const eligibleContainersForMasterItem = usePlannerStore(
+    (s) => s.eligibleContainersForMasterItem,
+  )
+
+  // Eligible containers when create mode arrives without a preselected container.
+  // We compute this directly off `containers` so it stays reactive.
+  const masterItemIdInPlay = mode?.kind === 'create' ? mode.masterItemId : null
+  const eligibleContainers = useMemo(
+    () => (masterItemIdInPlay ? eligibleContainersForMasterItem(masterItemIdInPlay) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selector reads from store
+    [masterItemIdInPlay, containers, masterItems],
+  )
+
+  // For create-from-row (no preselected container), this state tracks the picker.
+  const [pickedContainerId, setPickedContainerId] = useState<string | null>(null)
+
+  // The effective container ID we're working with.
+  const effectiveContainerId =
+    mode?.kind === 'create'
+      ? mode.containerId ?? pickedContainerId
+      : null
+
+  // Which master item are we holding a lock on? Resolved from mode so we can
+  // release the right lock when the dialog closes.
+  const lockedMasterId = useMemo(() => {
+    if (!mode) return null
+    if (mode.kind === 'create') return mode.masterItemId
+    const allocation = allocations.find((a) => a.id === mode.allocationId)
+    return allocation?.masterItemId ?? null
+  }, [mode, allocations])
+
+  const onOpenChange = (next: boolean) => {
+    if (!next) {
+      if (lockedMasterId) releaseLock(masterLockId(lockedMasterId))
+      closeAllocationDialog()
+    }
+  }
 
   const resolved = useMemo(() => {
     if (!mode) return null
@@ -28,17 +64,22 @@ export default function AllocationDialog() {
       if (!container || !item) return null
       return { container, item, existing: allocation }
     }
-    const container = containers.find((c) => c.id === mode.containerId)
     const item = masterItems.find((m) => m.id === mode.masterItemId)
-    if (!container || !item) return null
+    if (!item) return null
+    if (!effectiveContainerId) {
+      // Still picking — no container yet. Return the item context only.
+      return { container: null, item, existing: null }
+    }
+    const container = containers.find((c) => c.id === effectiveContainerId)
+    if (!container) return null
     const existing =
       allocations.find(
         (a) =>
-          a.containerId === mode.containerId &&
+          a.containerId === effectiveContainerId &&
           a.masterItemId === mode.masterItemId,
       ) ?? null
     return { container, item, existing }
-  }, [mode, allocations, containers, masterItems])
+  }, [mode, allocations, containers, masterItems, effectiveContainerId])
 
   const globalAvailable = resolved ? availableQty(resolved.item.id) : 0
   const existingQty = resolved?.existing?.quantity ?? 0
@@ -49,8 +90,18 @@ export default function AllocationDialog() {
   const [quantity, setQuantity] = useState<number>(0)
   const [submitting, setSubmitting] = useState(false)
 
+  // Reset picker selection when the dialog opens fresh.
   useEffect(() => {
-    if (!open || !resolved) return
+    if (!open) return
+    if (mode?.kind === 'create' && !mode.containerId) {
+      setPickedContainerId(eligibleContainers[0]?.id ?? null)
+    } else {
+      setPickedContainerId(null)
+    }
+  }, [open, mode, eligibleContainers])
+
+  useEffect(() => {
+    if (!open || !resolved || !resolved.container) return
     if (mode?.kind === 'edit' && resolved.existing) {
       setQuantity(resolved.existing.quantity)
     } else {
@@ -76,13 +127,21 @@ export default function AllocationDialog() {
 
   const { container, item, existing } = resolved
   const isEdit = mode?.kind === 'edit'
+  const isPickingContainer =
+    mode?.kind === 'create' && !mode.containerId && !pickedContainerId
+  const noEligibleContainers =
+    mode?.kind === 'create' && !mode.containerId && eligibleContainers.length === 0
   const minimum = isEdit ? 0 : 1
   const canSubmit =
-    quantity >= minimum && quantity <= cap && !submitting && quantity !== existingQty
+    !!container &&
+    quantity >= minimum &&
+    quantity <= cap &&
+    !submitting &&
+    quantity !== existingQty
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!canSubmit) return
+    if (!canSubmit || !container) return
     setSubmitting(true)
     try {
       if (existing) {
@@ -134,7 +193,8 @@ export default function AllocationDialog() {
           </div>
 
           <Dialog.Description className="sr-only">
-            Allocate cases from {item.sku} into {container.name}.
+            Allocate cases from {item.sku}
+            {container ? ` into ${container.code}` : ''}.
           </Dialog.Description>
 
           <div className="px-5 pt-4 pb-2">
@@ -142,26 +202,58 @@ export default function AllocationDialog() {
             <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
               {item.documentNumber} · line {item.lineId} · {item.name}
             </div>
-            <div className="mt-1 text-[10px] font-mono uppercase tracking-widest text-navy-500">
-              into {container.name} · {container.type} · {container.destination}
-            </div>
+            {container ? (
+              <div className="mt-1 text-[10px] font-mono uppercase tracking-widest text-navy-500">
+                into <span className="text-navy-900 font-bold">{container.code}</span>
+                {' · '}{container.type} · {container.destination}
+              </div>
+            ) : null}
           </div>
 
-          <dl className="px-5 py-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-            <dt className="text-navy-500">Original quantity</dt>
-            <dd className="text-right text-navy-900 font-mono">{item.originalQuantity}</dd>
-            <dt className="text-navy-500">Committed (OFQs)</dt>
-            <dd className="text-right text-navy-900 font-mono">{item.committedQuantity}</dd>
-            <dt className="text-navy-500">Allocated in drafts</dt>
-            <dd className="text-right text-navy-900 font-mono">
-              {item.originalQuantity - item.committedQuantity - globalAvailable}
-            </dd>
-            <dt className="text-navy-500 font-semibold">Available for this draft</dt>
-            <dd className="text-right text-navy-900 font-mono font-semibold">{cap}</dd>
-          </dl>
+          {mode?.kind === 'create' && !mode.containerId ? (
+            <div className="px-5 pb-3">
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-navy-400 mb-1.5">
+                  Add to container
+                </span>
+                {noEligibleContainers ? (
+                  <div className="px-3 py-2 rounded-lg border border-coral-accent/30 bg-coral-accent/5 text-xs text-coral-accent">
+                    No draft containers for {item.shipTo} on {item.name}. Create one first.
+                  </div>
+                ) : (
+                  <select
+                    value={pickedContainerId ?? ''}
+                    onChange={(e) => setPickedContainerId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent"
+                  >
+                    {eligibleContainers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code} · {c.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </label>
+            </div>
+          ) : null}
+
+          {container ? (
+            <dl className="px-5 py-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              <dt className="text-navy-500">Original quantity</dt>
+              <dd className="text-right text-navy-900 font-mono">{item.originalQuantity}</dd>
+              <dt className="text-navy-500">Committed (OFQs)</dt>
+              <dd className="text-right text-navy-900 font-mono">{item.committedQuantity}</dd>
+              <dt className="text-navy-500">Allocated in drafts</dt>
+              <dd className="text-right text-navy-900 font-mono">
+                {item.originalQuantity - item.committedQuantity - globalAvailable}
+              </dd>
+              <dt className="text-navy-500 font-semibold">Available for this draft</dt>
+              <dd className="text-right text-navy-900 font-mono font-semibold">{cap}</dd>
+            </dl>
+          ) : null}
 
           <form onSubmit={handleSubmit} className="px-5 py-4 border-t border-navy-100 space-y-3">
-            <label className="block">
+            <label className={`block ${container ? '' : 'opacity-40 pointer-events-none'}`}>
               <span className="block text-[10px] font-mono uppercase tracking-widest text-navy-400 mb-1.5">
                 Cases to allocate {isEdit ? '(set to 0 to remove)' : ''}
               </span>
@@ -171,10 +263,11 @@ export default function AllocationDialog() {
                 max={cap}
                 value={quantity}
                 onChange={(e) => setQuantity(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent"
-                autoFocus
+                disabled={!container}
+                className="w-full px-3 py-2 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent disabled:cursor-not-allowed"
+                autoFocus={!isPickingContainer}
               />
-              {cap === 0 && !isEdit ? (
+              {container && cap === 0 && !isEdit ? (
                 <div className="mt-1 text-[10px] text-coral-accent">
                   No cases available. Empty a draft container holding this PO,
                   or uncommit an OFQ to free up quantity.

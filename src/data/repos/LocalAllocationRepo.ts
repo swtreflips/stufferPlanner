@@ -30,6 +30,11 @@ export function createLocalAllocationRepo(): AllocationRepo {
         a.id === id ? { ...a, quantity } : a,
       )
     },
+    async updateContainerId(id, newContainerId) {
+      allocations = allocations.map((a) =>
+        a.id === id ? { ...a, containerId: newContainerId } : a,
+      )
+    },
     async delete(id) {
       allocations = allocations.filter((a) => a.id !== id)
     },

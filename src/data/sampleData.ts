@@ -9,8 +9,8 @@ function mdyToISO(s: string): string {
 }
 
 export const sampleSuppliers: Supplier[] = [
-  { id: 'sup-ditar', name: 'Ditar S.A' },
-  { id: 'sup-tejaswi', name: 'Tejaswi Plastic Pvt Ltd.' },
+  { id: 'sup-ditar', name: 'Ditar S.A', code: 'DT' },
+  { id: 'sup-tejaswi', name: 'Tejaswi Plastic Pvt Ltd.', code: 'TP' },
 ]
 
 const supplierIdByName = new Map(sampleSuppliers.map((s) => [s.name, s.id]))

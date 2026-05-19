@@ -301,6 +301,91 @@ interface PlannerStore {
 
 ---
 
+## Container codes
+
+Every container carries an immutable code minted at creation: **`<SUP><NNNN>`**.
+
+- `<SUP>` — 2-letter supplier code (e.g. `DT` for Ditar S.A, `TP` for Tejaswi Plastic Pvt Ltd.).
+- `<NNNN>` — zero-padded monotonic sequence per supplier (`0001`, `0002`, `0003`, …).
+
+Examples: `DT0001`, `DT0002`, `TP0001`.
+
+Codes are the **stable IDs** for shipping references in email, paperwork, conversation. The `name` field stays as a friendly nickname; the `code` never changes. Destinations don't influence the code — the container's destination is still bound at creation and enforced for allocations, but it's not encoded in the ID. This keeps the code short and avoids any city-name collision problem (Simi Valley vs San Vicente both deriving to "SV", etc.).
+
+### Resolving the supplier segment
+
+The supplier code lives on the `suppliers` table (`code` column, 2 letters, unique). Seeded for samples; admins set the code at supplier creation in production.
+
+### Sequence policy: monotonic per supplier
+
+Deleting a draft container does **not** free up its number. If `DT0002` is deleted, the next new Ditar draft is `DT0003`. References to `DT0002` in external systems will never silently point at a different container.
+
+The sequence is stored in `container_sequences(supplier_code, next_number)` (Phase 12) with atomic increment via the `next_container_code(supplier_code)` Postgres function. Local-dev keeps it in the store as `containerCodeSequences: Record<supplierCode, number>`.
+
+### Supplier binding
+
+Containers gain `supplier_id` at creation. **Only that supplier's POs can be allocated** into the container — destination match + supplier match, both enforced at drop time and via the `eligibleContainersForMasterItem` selector.
+
+This means mixed-supplier containers are blocked by construction — matching the OFQ semantics where one container ships one supplier's goods.
+
+---
+
+## Allocation entry points
+
+Three paths converge on the same `addAllocation` action:
+
+1. **Drag a row from the master grid** onto a draft container. Destination + supplier must match.
+2. **Double-click a row in the master grid** → opens AllocationDialog with a container picker. The picker lists draft containers whose destination AND supplier match the row; auto-selects the first; user adjusts as needed.
+3. **Click an existing allocation card** → AllocationDialog in edit mode (change qty or remove).
+
+All three acquire the master-item lock at entry and release on dialog close (drag + click-to-edit) or on cancel.
+
+Cross-container moves (drag an allocation card to a different container) also enforce destination + supplier match.
+
+---
+
+## Live editing & presence
+
+Once two or more users see the same shared world, conflicts get noisy fast — internal allocates a row while a factory drags it away. The model handles this with **per-master-item pessimistic locks** broadcast as live presence:
+
+- **Lock key**: `master:<masterItemId>`. Locking happens at the master item level (not allocation level) because the conflict is always about quantity availability for that PO line.
+- **Lifecycle**: lock acquired on `onDragStart` of a grid row, on `onDragStart` of an allocation card, or on click-to-edit an allocation. Released on `onDragCancel`, on invalid drop, or on `AllocationDialog` close (whether confirmed or cancelled). The lock is held through the modal — drag → drop → modal counts as one transaction.
+- **TTL + heartbeat**: locks expire 60s after acquisition. Active holders refresh every 20s via heartbeat. A 5s sweeper removes expired entries — covers tab-close / laptop-shut without leaking locks.
+- **Re-entrance**: same `(userId, sessionId)` can re-acquire its own lock idempotently. Same user in two tabs counts as different sessions — predictable for QA.
+
+Transport:
+- **Local dev**: `BroadcastChannel('stuffer-planner-presence')` — cross-tab on the same browser. Sub-millisecond, native API.
+- **Phase 12**: swap the channel internals for Supabase Realtime Presence. Lock entries are ephemeral — they never hit Postgres. The `commit_container` RPC stamps `committed_by` server-side via `auth.uid()`; that's the durable history.
+
+Message protocol (`PresenceMessage` in [src/types/lock.ts](src/types/lock.ts)):
+
+```ts
+type PresenceMessage =
+  | { type: 'lock-add'; lock: LockEntry }
+  | { type: 'lock-remove'; resourceId; sessionId }
+  | { type: 'lock-refresh'; resourceId; sessionId; expiresAt }
+  | { type: 'snapshot'; locks: LockEntry[] }
+  | { type: 'snapshot-request' }
+```
+
+UX:
+- Locked grid row → drag handle replaced with a `LockedAvatar` (colored circle + initial); hover tooltip names the editor.
+- Locked allocation card → tinted background + LockedAvatar chip top-right; click-to-edit disabled; drag disabled.
+- Click on a locked allocation → inline coral toast on the container card: *"{Name} is editing this row — try again in a moment"* (auto-dismisses in 3s).
+- Holder sees no special treatment — the active drag UX or open modal **is** the lock.
+
+User colours come from [src/utils/userColor.ts](src/utils/userColor.ts) — a small hardcoded mapping for seeded sample users plus a deterministic hash fallback. Predictable across tabs and sessions.
+
+---
+
+## Cross-container moves
+
+Allocations are draggable. Drop an allocation card on a different container card → the allocation's `containerId` updates (subject to the same destination-match rule as new allocations). If the target container already holds an allocation against the same master item, the move **merges** quantities into the existing allocation rather than creating a duplicate row.
+
+Same-container drop is a no-op (within-container reorder is a Phase 6 follow-up). dnd-kit's 8px activation distance separates click-to-edit from drag-to-move on allocation cards — no extra UI affordance needed.
+
+---
+
 ## What this model does not do (intentionally)
 
 - **No branching / scenarios / forks.** Variations are explored by emptying a container and re-arranging it in place.

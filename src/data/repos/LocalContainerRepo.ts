@@ -15,10 +15,12 @@ export function createLocalContainerRepo(): ContainerRepo {
       const displayOrder = input.displayOrder ?? containers.length
       const container: Container = {
         id: `container-${nextId++}`,
+        code: input.code,
         status: 'draft',
         name: input.name,
         type: input.type,
         destination: input.destination,
+        supplierId: input.supplierId,
         displayOrder,
         ofqReference: null,
         committedAt: null,

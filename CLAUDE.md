@@ -176,7 +176,7 @@ flows through to `MasterItem.raw` for forward-compat with future API ingestion.
 
 **Note on Line ID:** most rows have a blank `Line ID` (single-line POs). The parser defaults missing line IDs to `1` so that `${documentNumber}-${lineId}` remains a stable unique key.
 
-**Companion seeds:** [src/data/sampleData.ts](src/data/sampleData.ts) also exports `sampleSuppliers` (Ditar + Tejaswi) and `sampleProfiles` (Mike admin, Internal, Michelle/Ditar, Prasad/Tejaswi). Every master item is linked to a supplier via `supplierId`. These drive both the placeholder `AuthProvider` and the supplier-scoped grid filter for factory users. The shape mirrors the Phase 12 `suppliers` and `profiles` tables — the swap is one-for-one.
+**Companion seeds:** [src/data/sampleData.ts](src/data/sampleData.ts) also exports `sampleSuppliers` (Ditar `DT`, Tejaswi `TP`) and `sampleProfiles` (Mike admin, Internal, Michelle/Ditar, Prasad/Tejaswi). Every master item is linked to a supplier via `supplierId`. Suppliers carry a 2-letter `code` that feeds container codes (`<SUP><NNNN>` — see [CONTCONFIG.md](CONTCONFIG.md) "Container codes"). The shape mirrors the Phase 12 `suppliers` + `profiles` tables — the swap is one-for-one.
 
 ---
 
@@ -272,6 +272,10 @@ src/
     drag/
       DragOverlayRenderer.tsx
       DraggableRowHandle.tsx
+
+    presence/
+      PresenceManager.tsx        # heartbeat + sweeper; mounted in AppLayout
+      LockedAvatar.tsx           # the per-user chip shown on locked rows / cards
 
   store/
     plannerStore.ts
@@ -497,9 +501,12 @@ whether the eventual Supabase swap is a one-day task or a one-week refactor.
    and a `raw: Record<string, unknown>` blob. For Postgres:
    * Dates: store as `timestamptz`, not strings.
    * `raw` becomes a `jsonb` column.
-   * Tables: `suppliers`, `profiles`, `master_items` (renamed from
+   * Tables: `suppliers` (with `code`), `profiles`, `master_items` (renamed from
      `open_po_items`; gains `supplier_id` FK), `containers` (gains
-     `committed_by` FK to `auth.users`), `container_allocations`.
+     `committed_by` FK to `auth.users`, `code` unique, `supplier_id` FK),
+     `container_allocations`, `container_sequences` (atomic per-supplier counter
+     for the `<SUP><NNNN>` code series — see [CONTCONFIG.md](CONTCONFIG.md)
+     "Container codes").
      Full DDL in [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS".
 
 10. **RLS is the security boundary, not the UI.** Suppliers are a first-class
@@ -643,10 +650,18 @@ Deliverables:
 
 ## Phase 6 -- Reordering and Cross-Container Moves
 
-Goal:
+**Cross-container moves shipped** alongside the live editing locks (see
+[CONTCONFIG.md](CONTCONFIG.md) "Cross-container moves"). Allocation cards are
+`useDraggable`; dropping on a different container updates the allocation's
+`containerId` and merges into any existing same-PO allocation on the target.
+Destination match is enforced. Click vs drag separated by dnd-kit's 8px
+activation distance.
 
-* Move rows between containers.
-* Reorder within a container.
+Remaining for this phase:
+
+* **Within-container reorder** — drag an allocation up/down inside the same
+  container to change `displayOrder`. Uses `@dnd-kit/sortable` (already
+  installed). Same-container drops are currently no-ops.
 
 ---
 
@@ -867,8 +882,10 @@ prevent that.
 Sub-tasks:
 
 1. **Schema migration.** Create `supabase/migrations/0001_init.sql` with
-   `suppliers`, `profiles`, `master_items` (with `supplier_id` FK),
-   `containers` (with `committed_by` FK), and `container_allocations` tables.
+   `suppliers` (with `code`), `profiles`, `master_items` (with `supplier_id`
+   FK), `containers` (with `code` unique, `supplier_id` FK, `committed_by` FK),
+   `container_allocations`, and `container_sequences` (for monotonic
+   per-supplier `<SUP><NNNN>` codes).
    Dates as `timestamptz`, `raw` as `jsonb`. Full DDL in
    [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS".
 
