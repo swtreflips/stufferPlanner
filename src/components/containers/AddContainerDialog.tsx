@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import type { ContainerType } from '../../types/container'
+import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 
 const CONTAINER_TYPES: ContainerType[] = ['20GP', '40GP', '40HC', '45HC']
@@ -17,8 +18,14 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
   const suppliers = usePlannerStore((s) => s.suppliers)
   const containerCodeSequences = usePlannerStore((s) => s.containerCodeSequences)
   const createContainer = usePlannerStore((s) => s.createContainer)
+  const { user } = useAuth()
 
-  const [supplierId, setSupplierId] = useState<string>(suppliers[0]?.id ?? '')
+  // Factory users are locked to their own supplier. Internal/admin pick from the dropdown.
+  const isFactory = user.role === 'factory' && user.supplierId !== null
+
+  const [supplierId, setSupplierId] = useState<string>(
+    isFactory ? user.supplierId ?? '' : suppliers[0]?.id ?? '',
+  )
 
   // Destinations the picker offers are the union of destinations present in the
   // master grid for the currently-selected supplier (a container is supplier-
@@ -43,11 +50,15 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
   useEffect(() => {
     if (!open) return
     setName(defaultName)
-    setSupplierId((prev) =>
-      prev && suppliers.some((s) => s.id === prev) ? prev : suppliers[0]?.id ?? '',
-    )
+    if (isFactory) {
+      setSupplierId(user.supplierId ?? '')
+    } else {
+      setSupplierId((prev) =>
+        prev && suppliers.some((s) => s.id === prev) ? prev : suppliers[0]?.id ?? '',
+      )
+    }
     setType('40HC')
-  }, [open, defaultName, suppliers])
+  }, [open, defaultName, suppliers, isFactory, user.supplierId])
 
   // When supplier changes (or on open), make sure the destination dropdown
   // shows a value valid for that supplier.
@@ -121,19 +132,30 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
                 autoFocus
               />
             </Field>
-            <Field label="Supplier">
-              <select
-                value={supplierId}
-                onChange={(e) => setSupplierId(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent"
-              >
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.code} · {s.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {isFactory ? (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-navy-100 bg-navy-50/60">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
+                  Supplier
+                </span>
+                <span className="text-sm font-semibold text-navy-900">
+                  {user.supplierName ?? 'Unknown'}
+                </span>
+              </div>
+            ) : (
+              <Field label="Supplier">
+                <select
+                  value={supplierId}
+                  onChange={(e) => setSupplierId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent"
+                >
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.code} · {s.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Field label="Destination">
               <select
                 value={destinationName}

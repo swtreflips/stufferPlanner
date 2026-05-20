@@ -205,10 +205,10 @@ Some suppliers — like Tejaswi's user on `prasad.tejaswiplastic@gmail.com` — 
 | Table | admin | internal | factory |
 |---|---|---|---|
 | `master_items` | full r/w | read all; no write to PO data | read **own supplier only**; UPDATE `cargo_ready`, `cbm_per_case`, `cbm_total` only on rows where `supplier_id = profile.supplier_id` |
-| `containers` (any status) | full r/w; commit/uncommit | full r/w; commit only (no uncommit) | read all; INSERT (draft); UPDATE (draft, non-commit fields); DELETE (draft); no commit/uncommit |
-| `container_allocations` | full r/w | full r/w | full r/w on rows in draft containers |
+| `containers` (any status) | full r/w; commit/uncommit | full r/w; commit only (no uncommit) | read **own supplier only** (`supplier_id = profile.supplier_id`); INSERT draft (supplier auto-bound to own); UPDATE (draft, non-commit fields); DELETE (draft); no commit/uncommit |
+| `container_allocations` | full r/w | full r/w | full r/w on rows in own-supplier draft containers |
 
-Everyone sees the same containers world (drafts + committed). Only the master grid is supplier-filtered for factory users. The social convention remains *"internal has priority for arrangement; factories only rearrange when necessary."*
+Containers follow the same supplier-scoping rule as `master_items`. A factory never sees another supplier's containers (drafts or committed OFQs) — visibility, the AddContainer dialog, and the cross-container drag/drop all enforce it. Admin/Internal see everything; the tray clusters containers by supplier with section labels so the universe stays scannable. The social convention remains *"internal has priority for arrangement; factories only rearrange when necessary."*
 
 ### Commit signatures
 

@@ -1,20 +1,70 @@
 import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
+import type { Container } from '../../types/container'
+import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import ContainerCard from './ContainerCard'
 import AddContainerDialog from './AddContainerDialog'
 
+interface SupplierGroup {
+  supplierId: string
+  supplierName: string
+  containers: Container[]
+}
+
 export default function ContainerTray() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const containers = usePlannerStore((s) => s.containers)
+  const suppliers = usePlannerStore((s) => s.suppliers)
+  const { user } = useAuth()
+
+  const isFactory = user.role === 'factory' && user.supplierId !== null
+  const factorySupplierId = user.supplierId
 
   const { committed, drafts } = useMemo(() => {
-    const sorted = [...containers].sort((a, b) => a.displayOrder - b.displayOrder)
+    const scoped = isFactory
+      ? containers.filter((c) => c.supplierId === factorySupplierId)
+      : containers
+    const sorted = [...scoped].sort((a, b) => a.displayOrder - b.displayOrder)
     return {
       committed: sorted.filter((c) => c.status === 'committed'),
       drafts: sorted.filter((c) => c.status === 'draft'),
     }
-  }, [containers])
+  }, [containers, isFactory, factorySupplierId])
+
+  // For admin/internal we cluster by supplier inside each section, with small
+  // labels between groups. Factory view skips this since they only see their
+  // own supplier.
+  const groupBySupplier = (list: Container[]): SupplierGroup[] => {
+    const bySupplier = new Map<string, Container[]>()
+    for (const c of list) {
+      const existing = bySupplier.get(c.supplierId)
+      if (existing) existing.push(c)
+      else bySupplier.set(c.supplierId, [c])
+    }
+    return Array.from(bySupplier.entries())
+      .map(([supplierId, group]) => ({
+        supplierId,
+        supplierName:
+          suppliers.find((s) => s.id === supplierId)?.name ?? supplierId,
+        containers: group,
+      }))
+      .sort((a, b) => a.supplierName.localeCompare(b.supplierName))
+  }
+
+  const renderGroups = (list: Container[]) => {
+    if (isFactory) {
+      return list.map((c) => <ContainerCard key={c.id} container={c} />)
+    }
+    return groupBySupplier(list).map((group) => (
+      <div key={group.supplierId} className="space-y-3">
+        <SupplierLabel name={group.supplierName} />
+        {group.containers.map((c) => (
+          <ContainerCard key={c.id} container={c} />
+        ))}
+      </div>
+    ))
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -34,16 +84,12 @@ export default function ContainerTray() {
           <>
             {committed.length > 0 ? (
               <Section label="Committed (OFQs)">
-                {committed.map((c) => (
-                  <ContainerCard key={c.id} container={c} />
-                ))}
+                <div className="space-y-3">{renderGroups(committed)}</div>
               </Section>
             ) : null}
             {drafts.length > 0 ? (
               <Section label="Drafts">
-                {drafts.map((c) => (
-                  <ContainerCard key={c.id} container={c} />
-                ))}
+                <div className="space-y-3">{renderGroups(drafts)}</div>
               </Section>
             ) : null}
           </>
@@ -78,6 +124,18 @@ function Section({ label, children }: { label: string; children: React.ReactNode
       </div>
       {children}
     </section>
+  )
+}
+
+function SupplierLabel({ name }: { name: string }) {
+  return (
+    <div className="flex items-center gap-2 px-1 py-0.5">
+      <span className="h-px flex-1 bg-navy-200" />
+      <span className="text-[10px] font-mono uppercase tracking-widest text-navy-500">
+        {name}
+      </span>
+      <span className="h-px flex-1 bg-navy-200" />
+    </div>
   )
 }
 

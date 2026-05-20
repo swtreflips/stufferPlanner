@@ -732,21 +732,31 @@ on the UI side and (in Phase 12) by RLS on the data side.
 
 ### Internal role
 
-* Container tray: full access -- create / delete draft containers, allocate any
-  PO line, empty drafts, **commit a container** to create an OFQ. Cannot
-  uncommit (admin-only).
+* Container tray: full access -- see containers across all suppliers, grouped
+  by supplier with small section labels (e.g. *── Ditar S.A ──*) inside both
+  the Committed and Drafts sections. Create / delete draft containers,
+  allocate any PO line, empty drafts, **commit a container** to create an
+  OFQ. Cannot uncommit (admin-only).
+* AddContainer dialog: Supplier dropdown visible; pick which supplier the new
+  container is bound to.
 * Open PO grid: all rows visible; **all columns `editable: false`** (internal
   owns planning, not data).
 * No "Upload Excel" toolbar (factory-only feature, Phase 10.5).
+* Per-supplier focus filter for the *"currently working with Ditar"* workflow
+  is a planned follow-up — not yet shipped.
 
 ### Factory role
 
-* Container tray: same shared view. Can drag rows in / out, create draft
-  containers, empty drafts. **Cannot commit or uncommit.** Social convention:
-  internal has priority for arrangement; factories rearrange only when
-  necessary.
-* Open PO grid: filter to rows where `item.name === factoryName`. Mark all
-  columns as `editable: false` *except* `cargoReady`, `cbmPerCase`, and
+* Container tray: scoped to own supplier only. Factories see exactly their
+  supplier's containers (drafts + committed OFQs) — never another supplier's.
+  No per-supplier grouping in the tray (only one supplier visible). Can drag
+  rows in / out, create draft containers, empty drafts. **Cannot commit or
+  uncommit.** Social convention: internal has priority for arrangement;
+  factories rearrange only when necessary.
+* AddContainer dialog: Supplier dropdown hidden; a read-only chip shows the
+  factory's own supplier name; new containers are auto-bound to that supplier.
+* Open PO grid: filter to rows where `supplierId === user.supplierId`. Mark
+  all columns as `editable: false` *except* `cargoReady`, `cbmPerCase`, and
   `cbmTotal`. Both CBM values are entered manually -- the app does **not**
   auto-derive one from the other.
 * Bulk-update path for the editable fields: see Phase 10.5 (CSV upload).
