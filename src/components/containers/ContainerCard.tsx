@@ -7,6 +7,7 @@ import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
 import AllocationCard from './AllocationCard'
+import ContainerCapacityBar from './ContainerCapacityBar'
 
 interface Props {
   container: Container
@@ -226,6 +227,7 @@ export default function ContainerCard({ container }: Props) {
           {metrics.lines} lines · {metrics.totalCbm.toFixed(2)} m³ · {metrics.totalQty} cases
           {metrics.maxCargoReady ? ` · ready ${formatDate(metrics.maxCargoReady)}` : ''}
         </div>
+        <ContainerCapacityBar container={container} totalCbm={metrics.totalCbm} />
       </div>
 
       <footer className="flex justify-between items-center gap-2 px-4 py-2 border-t border-navy-100">

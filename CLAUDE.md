@@ -344,7 +344,7 @@ interface MasterItem {
 The planning model uses two entities (plus master items). Full schema in
 [CONTCONFIG.md](CONTCONFIG.md) "Schema". Summary:
 
-* `Container` -- bound to a single `destination` and a `type` (20GP/40GP/40HC/45HC).
+* `Container` -- bound to a single `destination` and a `type` (20GP/40GP/40HC).
   Has a `status`: `'draft'` (editable) or `'committed'` (an OFQ; has
   `ofqReference`). Commit is per-container.
 * `Allocation` -- `{ containerId, masterItemId, quantity }`. The qty is
@@ -595,7 +595,7 @@ Goal:
 * Render the scrollable container tray (left panel).
 * "Add Container" button opens a dialog asking for **destination** (selected from
   the distinct `shipTo` values in the loaded open PO items) and container **type**
-  (`20GP` / `40GP` / `40HC` / `45HC`).
+  (`20GP` / `40GP` / `40HC`).
 * A container is bound to one destination at creation. Only PO rows with matching
   `shipTo` can be allocated into it (enforced in Phase 5.5).
 * New containers start as empty drafts. All users can delete drafts; committed

@@ -5,7 +5,7 @@ import type { ContainerType } from '../../types/container'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 
-const CONTAINER_TYPES: ContainerType[] = ['20GP', '40GP', '40HC', '45HC']
+const CONTAINER_TYPES: ContainerType[] = ['20GP', '40GP', '40HC']
 
 interface Props {
   open: boolean

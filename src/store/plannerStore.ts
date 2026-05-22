@@ -13,6 +13,7 @@ import {
   supplierRepo,
 } from '../data/repos'
 import { createPresenceChannel } from '../data/presenceChannel'
+import { getCapacityConfig } from '../data/containerCapacity'
 
 const LOCK_TTL_MS = 60_000
 const SESSION_ID =
@@ -63,6 +64,7 @@ interface PlannerStore {
   createContainer(args: CreateContainerArgs): Promise<void>
   deleteContainer(id: string): Promise<void>
   emptyContainer(id: string): Promise<void>
+  updateContainerCapacity(id: string, capacityCbm: number): Promise<void>
 
   addAllocation(input: AddAllocationArgs): Promise<Allocation>
   updateAllocation(id: string, quantity: number): Promise<void>
@@ -123,12 +125,14 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       const prefix = supplier.code.toUpperCase()
       const next = (get().containerCodeSequences[prefix] ?? 0) + 1
       const code = `${prefix}${String(next).padStart(4, '0')}`
+      const capacityCbm = getCapacityConfig(type)?.defaultOperationalCbm ?? null
       const container = await containerRepo.create({
         code,
         name,
         type,
         destination,
         supplierId,
+        capacityCbm,
       })
       set((s) => ({
         containers: [...s.containers, container],
@@ -149,6 +153,15 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       await allocationRepo.deleteByContainerId(containerId)
       set((s) => ({
         allocations: s.allocations.filter((a) => a.containerId !== containerId),
+      }))
+    },
+
+    async updateContainerCapacity(id, capacityCbm) {
+      const container = get().containers.find((c) => c.id === id)
+      if (!container || container.status !== 'draft') return
+      const updated = await containerRepo.updateCapacity(id, capacityCbm)
+      set((s) => ({
+        containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))
     },
 

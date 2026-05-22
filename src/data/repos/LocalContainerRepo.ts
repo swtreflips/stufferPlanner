@@ -21,6 +21,7 @@ export function createLocalContainerRepo(): ContainerRepo {
         type: input.type,
         destination: input.destination,
         supplierId: input.supplierId,
+        capacityCbm: input.capacityCbm,
         displayOrder,
         ofqReference: null,
         committedAt: null,
@@ -32,6 +33,17 @@ export function createLocalContainerRepo(): ContainerRepo {
     },
     async delete(id) {
       containers = containers.filter((c) => c.id !== id)
+    },
+    async updateCapacity(id, capacityCbm): Promise<Container> {
+      const idx = containers.findIndex((c) => c.id === id)
+      if (idx === -1) throw new Error(`updateCapacity: container ${id} not found`)
+      const updated: Container = { ...containers[idx], capacityCbm }
+      containers = [
+        ...containers.slice(0, idx),
+        updated,
+        ...containers.slice(idx + 1),
+      ]
+      return { ...updated }
     },
     async commit(id, ofqReference, committedBy): Promise<Container> {
       const idx = containers.findIndex((c) => c.id === id)

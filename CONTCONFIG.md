@@ -30,7 +30,7 @@ Every container has a `status`:
 - **`draft`** — being arranged. Editable by anyone.
 - **`committed`** — locked. Has an `ofqReference`. The container's allocations have decremented master `committedQuantity` globally. **This is an OFQ.**
 
-A container is bound to a `destination` and a `type` (20GP / 40GP / 40HC / 45HC) at creation.
+A container is bound to a `destination` and a `type` (20GP / 40GP / 40HC) at creation.
 
 ### 3. Allocations
 
@@ -122,8 +122,9 @@ create table containers (
   id            uuid primary key default gen_random_uuid(),
   status        text not null check (status in ('draft','committed')),
   name          text not null,
-  type          text not null check (type in ('20GP','40GP','40HC','45HC')),
+  type          text not null check (type in ('20GP','40GP','40HC')),
   destination   text not null,
+  capacity_cbm  numeric(10,4),                  -- operational CBM cap; null when type has no configured capacity
   display_order integer not null default 0,
   ofq_reference text,
   committed_at  timestamptz,
@@ -327,6 +328,44 @@ The sequence is stored in `container_sequences(supplier_code, next_number)` (Pha
 Containers gain `supplier_id` at creation. **Only that supplier's POs can be allocated** into the container — destination match + supplier match, both enforced at drop time and via the `eligibleContainersForMasterItem` selector.
 
 This means mixed-supplier containers are blocked by construction — matching the OFQ semantics where one container ships one supplier's goods.
+
+---
+
+## Container capacity
+
+Each container carries an **operational CBM cap** (`capacity_cbm`) — the usable
+volume planners arrange against. It is distinct from the container type's
+**structural maximum**:
+
+- **Structural max** — the physical ceiling of the container type. Type-level
+  config, never copied onto the row (so the config stays authoritative).
+- **Operational cap** (`capacity_cbm`) — lower than the structural max because
+  box dimensions prevent perfect packing; some volume is always left empty.
+  Stored per container, adjustable.
+
+### Configured capacities
+
+| Type | Structural max (m³) | Operational default (m³) |
+|------|--------------------:|-------------------------:|
+| 20GP | 33                  | 29                       |
+| 40GP | 67                  | 57                       |
+| 40HC | 76                  | 65                       |
+
+Type-level numbers live in one file
+([src/data/containerCapacity.ts](src/data/containerCapacity.ts)). `capacity_cbm`
+stays nullable: a future container type introduced without a configured
+capacity would store `null` and render no fill bar.
+
+### Behaviour
+
+- New containers default `capacity_cbm` to the type's operational default at
+  creation — no AddContainer dialog step.
+- The cap is editable inline on the **draft** container card, bounded
+  `[1, structural max]`. Committed containers show the cap read-only.
+- The card renders a fill bar: `total CBM ÷ capacity_cbm`. Teal below 85%,
+  amber 85–100%, coral above 100%.
+- **Over-cap is a visual warning only** — it never blocks allocations. Hard
+  capacity validation remains a future enhancement.
 
 ---
 

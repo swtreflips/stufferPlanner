@@ -25,6 +25,7 @@ export interface CreateContainerInput {
   type: ContainerType
   destination: string
   supplierId: string
+  capacityCbm: number | null
   displayOrder?: number
 }
 
@@ -32,6 +33,7 @@ export interface ContainerRepo {
   fetchAll(): Promise<Container[]>
   create(input: CreateContainerInput): Promise<Container>
   delete(id: string): Promise<void>
+  updateCapacity(id: string, capacityCbm: number): Promise<Container>
   commit(id: string, ofqReference: string, committedBy: string): Promise<Container>
   uncommit(id: string): Promise<Container>
 }
