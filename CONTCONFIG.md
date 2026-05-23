@@ -331,6 +331,88 @@ This means mixed-supplier containers are blocked by construction — matching th
 
 ---
 
+## Post-commit lifecycle
+
+Commit isn't the end of a container's story — it's the start of an operational
+tail the freight forwarder drives. Each committed container carries an
+additional `logisticsStatus` that advances through three milestones:
+
+```
+draft ──(commit)──▶ committed ──(book)──▶ booked
+                                              │
+                                  (confirmSchedule)
+                                              ▼
+                                          scheduled ──(ship)──▶ shipped
+```
+
+| Stage | What changed in the world | What the container carries |
+|---|---|---|
+| `committed` | OFQ created; master availability dropped | `ofqReference`, `committedAt`, `committedBy` |
+| `booked` | Carrier + rate picked | `bookedAt`, `bookedBy` |
+| `scheduled` | Forwarder returned a vessel schedule we accepted | `schedule` (carrier, POL, POD, LastCY, ETD, ETA, transit days), `scheduledAt`, `scheduledBy` |
+| `shipped` | Shipping documents received | `shippedAt`, `shippedBy` |
+
+### Rules
+
+- **Strictly sequential.** Can't book a draft (no `committed` baseline yet);
+  can't ship without a confirmed schedule. The store actions enforce this —
+  no one can mark a stage out of order.
+- **Forward and back, per stage.** Each forward action (`markContainerBooked`,
+  `setContainerSchedule`, `markContainerShipped`) has an inverse
+  (`unmarkContainerBooked`, `clearContainerSchedule`, `unmarkContainerShipped`)
+  that reverts to the prior status and nulls the relevant `*At`/`*By` stamps.
+  Schedule revisions (forwarder bumps ETD) are saved without changing status
+  or stamps — `scheduledBy` is the *first* scheduler, not the last editor.
+- **Uncommit blocked past `committed`.** Once a container is booked /
+  scheduled / shipped, the Uncommit button is disabled with a tooltip — the
+  app has to be rolled back through the Logistics dialog first to stay in
+  sync with reality (you can't un-book a real booking by clicking).
+- **Permissions.** Same as commit: admin and internal can advance/reverse any
+  stage. Factory views the Logistics dialog read-only.
+
+### UI
+
+A compact 3-pill row sits at the footer of every committed card
+(`Booked · Scheduled · Shipped`). Done pills are filled navy; the next-pending
+pill is tinted amber as a subtle hint; not-yet pills are outlined. Clicking
+the row opens the [Logistics dialog](src/components/containers/ContainerLogisticsDialog.tsx),
+which is a sectioned modal — one section per stage with its own
+mark/un-mark buttons and (for the schedule section) the form fields above.
+
+### Schedule shape (forward-compatible)
+
+The `schedule` field is a single nested object on `Container` for now:
+
+```ts
+interface ContainerSchedule {
+  carrierName: string       // "Hapag-Lloyd", "COSCO", ...
+  pol: string               // port of loading
+  pod: string               // port of discharge
+  lastCy: string | null     // ISO date — last day to drop empty at CY
+  etd: string | null
+  eta: string | null
+  transitTimeDays: number | null
+}
+```
+
+Embedded keeps the in-memory model simple. When the separate schedules
+project goes live, this object lifts out into a `schedules` table and
+`container.schedule_id` references it; the shape doesn't change. The Phase 12
+sketch is similar — direct table updates replaced with per-transition
+`SECURITY DEFINER` RPCs (`mark_booked`, `set_schedule`, `mark_scheduled`,
+`mark_shipped` plus inverses), `*_by` stamped via `auth.uid()`.
+
+### What's deferred
+
+- Type (direct / 1TS / 2TS), vessel names, and TS port fields — kept the
+  schedule narrow on purpose; can extend later.
+- Audit history (who advanced what stage when, over time) — the `*At` /
+  `*By` fields are the latest snapshot only.
+- Two-click confirmation on Un-X actions — added if accidental rollbacks
+  start happening.
+
+---
+
 ## Container capacity
 
 Each container carries an **operational CBM cap** (`capacity_cbm`) — the usable

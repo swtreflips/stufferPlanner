@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import type { MasterItem } from '../types/masterItem'
-import type { Container, ContainerType } from '../types/container'
+import type {
+  Container,
+  ContainerSchedule,
+  ContainerType,
+} from '../types/container'
 import type { Allocation, AllocationDialogMode } from '../types/allocation'
 import type { Profile } from '../types/profile'
 import type { Supplier } from '../types/supplier'
@@ -44,6 +48,11 @@ interface CommitDialogState {
   containerId: string | null
 }
 
+interface LogisticsDialogState {
+  open: boolean
+  containerId: string | null
+}
+
 interface PlannerStore {
   masterItems: MasterItem[]
   containers: Container[]
@@ -52,6 +61,7 @@ interface PlannerStore {
   profiles: Profile[]
   allocationDialog: AllocationDialogState
   commitDialog: CommitDialogState
+  logisticsDialog: LogisticsDialogState
 
   // Monotonic per-supplier sequence (supplier code → next number).
   // Never decremented on delete; ensures container codes are stable references.
@@ -74,10 +84,26 @@ interface PlannerStore {
   commitContainer(id: string, ofqReference: string, committedBy: string): Promise<void>
   uncommitContainer(id: string): Promise<void>
 
+  // Post-commit lifecycle. Each action enforces the source status itself; the
+  // dialog wires them to its buttons. *By stamps come from the caller (the
+  // current useAuth profile id); Phase 12 swaps to auth.uid() server-side.
+  markContainerBooked(id: string, actorId: string): Promise<void>
+  unmarkContainerBooked(id: string): Promise<void>
+  setContainerSchedule(
+    id: string,
+    schedule: ContainerSchedule,
+    actorId: string,
+  ): Promise<void>
+  clearContainerSchedule(id: string): Promise<void>
+  markContainerShipped(id: string, actorId: string): Promise<void>
+  unmarkContainerShipped(id: string): Promise<void>
+
   openAllocationDialog(mode: AllocationDialogMode): void
   closeAllocationDialog(): void
   openCommitDialog(containerId: string): void
   closeCommitDialog(): void
+  openLogisticsDialog(containerId: string): void
+  closeLogisticsDialog(): void
 
   acquireLock(resourceId: string, user: { id: string; displayName: string }): boolean
   releaseLock(resourceId: string): void
@@ -115,6 +141,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     profiles: [],
     allocationDialog: { open: false, mode: null },
     commitDialog: { open: false, containerId: null },
+    logisticsDialog: { open: false, containerId: null },
     containerCodeSequences: {},
     locks: {},
     mySessionId: SESSION_ID,
@@ -234,6 +261,11 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     async uncommitContainer(id) {
       const container = get().containers.find((c) => c.id === id)
       if (!container || container.status !== 'committed') return
+      // Uncommit only from the 'committed' stage — once a container is booked,
+      // scheduled, or shipped, the operational state has to be rolled back
+      // explicitly via the Logistics dialog first. Keeps the app in sync with
+      // reality (you can't un-book a real booking with a button click).
+      if (container.logisticsStatus && container.logisticsStatus !== 'committed') return
       const containerAllocations = get().allocations.filter(
         (a) => a.containerId === id,
       )
@@ -269,6 +301,101 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     },
     closeCommitDialog() {
       set({ commitDialog: { open: false, containerId: null } })
+    },
+    openLogisticsDialog(containerId) {
+      set({ logisticsDialog: { open: true, containerId } })
+    },
+    closeLogisticsDialog() {
+      set({ logisticsDialog: { open: false, containerId: null } })
+    },
+
+    async markContainerBooked(id, actorId) {
+      const container = get().containers.find((c) => c.id === id)
+      if (!container || container.logisticsStatus !== 'committed') return
+      const updated = await containerRepo.updateLogistics(id, {
+        logisticsStatus: 'booked',
+        bookedAt: new Date().toISOString(),
+        bookedBy: actorId,
+      })
+      set((s) => ({
+        containers: s.containers.map((c) => (c.id === id ? updated : c)),
+      }))
+    },
+
+    async unmarkContainerBooked(id) {
+      const container = get().containers.find((c) => c.id === id)
+      if (!container || container.logisticsStatus !== 'booked') return
+      const updated = await containerRepo.updateLogistics(id, {
+        logisticsStatus: 'committed',
+        bookedAt: null,
+        bookedBy: null,
+      })
+      set((s) => ({
+        containers: s.containers.map((c) => (c.id === id ? updated : c)),
+      }))
+    },
+
+    async setContainerSchedule(id, schedule, actorId) {
+      const container = get().containers.find((c) => c.id === id)
+      if (!container) return
+      // Allow from booked (advance to scheduled), or while already scheduled /
+      // shipped (revision — forwarders revise ETD/ETA). On the advance path we
+      // stamp scheduledAt/By; revisions leave those alone (first scheduler).
+      if (container.logisticsStatus === 'committed' || container.logisticsStatus === null) return
+      const advancing = container.logisticsStatus === 'booked'
+      const updated = await containerRepo.updateLogistics(id, {
+        schedule,
+        ...(advancing
+          ? {
+              logisticsStatus: 'scheduled' as const,
+              scheduledAt: new Date().toISOString(),
+              scheduledBy: actorId,
+            }
+          : {}),
+      })
+      set((s) => ({
+        containers: s.containers.map((c) => (c.id === id ? updated : c)),
+      }))
+    },
+
+    async clearContainerSchedule(id) {
+      const container = get().containers.find((c) => c.id === id)
+      if (!container || container.logisticsStatus !== 'scheduled') return
+      const updated = await containerRepo.updateLogistics(id, {
+        logisticsStatus: 'booked',
+        schedule: null,
+        scheduledAt: null,
+        scheduledBy: null,
+      })
+      set((s) => ({
+        containers: s.containers.map((c) => (c.id === id ? updated : c)),
+      }))
+    },
+
+    async markContainerShipped(id, actorId) {
+      const container = get().containers.find((c) => c.id === id)
+      if (!container || container.logisticsStatus !== 'scheduled') return
+      const updated = await containerRepo.updateLogistics(id, {
+        logisticsStatus: 'shipped',
+        shippedAt: new Date().toISOString(),
+        shippedBy: actorId,
+      })
+      set((s) => ({
+        containers: s.containers.map((c) => (c.id === id ? updated : c)),
+      }))
+    },
+
+    async unmarkContainerShipped(id) {
+      const container = get().containers.find((c) => c.id === id)
+      if (!container || container.logisticsStatus !== 'shipped') return
+      const updated = await containerRepo.updateLogistics(id, {
+        logisticsStatus: 'scheduled',
+        shippedAt: null,
+        shippedBy: null,
+      })
+      set((s) => ({
+        containers: s.containers.map((c) => (c.id === id ? updated : c)),
+      }))
     },
 
     async moveAllocation(allocationId, newContainerId) {

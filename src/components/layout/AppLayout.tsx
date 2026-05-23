@@ -17,6 +17,7 @@ import ContainerTray from '../containers/ContainerTray'
 import DragOverlayRenderer from '../drag/DragOverlayRenderer'
 import AllocationDialog from '../containers/AllocationDialog'
 import CommitConfirmDialog from '../containers/CommitConfirmDialog'
+import ContainerLogisticsDialog from '../containers/ContainerLogisticsDialog'
 import PresenceManager from '../presence/PresenceManager'
 
 const OpenPoStatusReport = lazy(() => import('../grid/OpenPoStatusReport'))
@@ -169,6 +170,7 @@ export default function AppLayout() {
       </DragOverlay>
       <AllocationDialog />
       <CommitConfirmDialog />
+      <ContainerLogisticsDialog />
       <PresenceManager />
     </DndContext>
   )

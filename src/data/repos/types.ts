@@ -1,5 +1,10 @@
 import type { MasterItem } from '../../types/masterItem'
-import type { Container, ContainerType } from '../../types/container'
+import type {
+  Container,
+  ContainerSchedule,
+  ContainerType,
+  LogisticsStatus,
+} from '../../types/container'
 import type { Allocation } from '../../types/allocation'
 import type { Supplier } from '../../types/supplier'
 import type { Profile } from '../../types/profile'
@@ -29,6 +34,17 @@ export interface CreateContainerInput {
   displayOrder?: number
 }
 
+export interface LogisticsPatch {
+  logisticsStatus?: LogisticsStatus | null
+  bookedAt?: string | null
+  bookedBy?: string | null
+  schedule?: ContainerSchedule | null
+  scheduledAt?: string | null
+  scheduledBy?: string | null
+  shippedAt?: string | null
+  shippedBy?: string | null
+}
+
 export interface ContainerRepo {
   fetchAll(): Promise<Container[]>
   create(input: CreateContainerInput): Promise<Container>
@@ -36,6 +52,7 @@ export interface ContainerRepo {
   updateCapacity(id: string, capacityCbm: number): Promise<Container>
   commit(id: string, ofqReference: string, committedBy: string): Promise<Container>
   uncommit(id: string): Promise<Container>
+  updateLogistics(id: string, patch: LogisticsPatch): Promise<Container>
 }
 
 export interface CreateAllocationInput {

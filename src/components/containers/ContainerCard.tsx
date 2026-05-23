@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useDndContext, useDroppable } from '@dnd-kit/core'
 import { CheckCircle2, FileCheck2, MapPin, RotateCcw, Trash2 } from 'lucide-react'
-import type { Container } from '../../types/container'
+import type { Container, LogisticsStatus } from '../../types/container'
 import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
@@ -33,6 +33,7 @@ export default function ContainerCard({ container }: Props) {
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
   const openCommitDialog = usePlannerStore((s) => s.openCommitDialog)
   const uncommitContainer = usePlannerStore((s) => s.uncommitContainer)
+  const openLogisticsDialog = usePlannerStore((s) => s.openLogisticsDialog)
   const displayNameById = usePlannerStore((s) => s.displayNameById)
   const acquireLock = usePlannerStore((s) => s.acquireLock)
   const isLockedByOther = usePlannerStore((s) => s.isLockedByOther)
@@ -48,6 +49,11 @@ export default function ContainerCard({ container }: Props) {
   const isCommitted = container.status === 'committed'
   const canCommit = user.role === 'admin' || user.role === 'internal'
   const canUncommit = user.role === 'admin'
+  const logisticsStage: LogisticsStatus = container.logisticsStatus ?? 'committed'
+  // Once a committed container moves past 'committed' (booked / scheduled /
+  // shipped) it represents a real operational state that can't be undone by
+  // clicking a button. Roll back via the Logistics dialog first.
+  const uncommitDisabled = logisticsStage !== 'committed'
 
   const [confirming, setConfirming] = useState(false)
 
@@ -228,6 +234,12 @@ export default function ContainerCard({ container }: Props) {
           {metrics.maxCargoReady ? ` · ready ${formatDate(metrics.maxCargoReady)}` : ''}
         </div>
         <ContainerCapacityBar container={container} totalCbm={metrics.totalCbm} />
+        {isCommitted ? (
+          <LogisticsPillRow
+            stage={logisticsStage}
+            onOpen={() => openLogisticsDialog(container.id)}
+          />
+        ) : null}
       </div>
 
       <footer className="flex justify-between items-center gap-2 px-4 py-2 border-t border-navy-100">
@@ -262,7 +274,13 @@ export default function ContainerCard({ container }: Props) {
               <button
                 type="button"
                 onClick={handleUncommit}
-                className="flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded text-navy-500 hover:text-coral-accent transition-colors"
+                disabled={uncommitDisabled}
+                title={
+                  uncommitDisabled
+                    ? 'Roll back the logistics stage first'
+                    : undefined
+                }
+                className="flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded text-navy-500 hover:text-coral-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-navy-500"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Uncommit
@@ -282,6 +300,68 @@ export default function ContainerCard({ container }: Props) {
         ) : null}
       </footer>
     </article>
+  )
+}
+
+// Footer pill row on committed cards. Three pills track the post-commit
+// lifecycle (booked → scheduled → shipped). The "next pending" pill is tinted
+// amber as a subtle hint of what's owed; done pills are filled navy; not-yet
+// pills are outlined. Clicking anywhere opens the Logistics dialog.
+function LogisticsPillRow({
+  stage,
+  onOpen,
+}: {
+  stage: LogisticsStatus
+  onOpen: () => void
+}) {
+  const order: LogisticsStatus[] = ['committed', 'booked', 'scheduled', 'shipped']
+  const stageIdx = order.indexOf(stage)
+  const pillState = (target: LogisticsStatus): 'done' | 'next' | 'pending' => {
+    const targetIdx = order.indexOf(target)
+    if (targetIdx <= stageIdx) return 'done'
+    if (targetIdx === stageIdx + 1) return 'next'
+    return 'pending'
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="mt-3 w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-navy-50 transition-colors group"
+      aria-label="Open logistics details"
+    >
+      <Pill label="Booked" state={pillState('booked')} />
+      <Pill label="Scheduled" state={pillState('scheduled')} />
+      <Pill label="Shipped" state={pillState('shipped')} />
+    </button>
+  )
+}
+
+function Pill({
+  label,
+  state,
+}: {
+  label: string
+  state: 'done' | 'next' | 'pending'
+}) {
+  const dotClass =
+    state === 'done'
+      ? 'bg-navy-900 border-navy-900'
+      : state === 'next'
+        ? 'bg-amber-accent/20 border-amber-accent'
+        : 'bg-transparent border-navy-300'
+  const textClass =
+    state === 'done'
+      ? 'text-navy-900'
+      : state === 'next'
+        ? 'text-amber-accent'
+        : 'text-navy-400'
+  return (
+    <span
+      className={`flex-1 flex items-center justify-center gap-1.5 text-[10px] font-mono uppercase tracking-widest ${textClass}`}
+    >
+      <span className={`w-2 h-2 rounded-full border ${dotClass}`} />
+      {label}
+    </span>
   )
 }
 

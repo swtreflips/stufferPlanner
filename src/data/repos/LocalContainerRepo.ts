@@ -1,5 +1,9 @@
 import type { Container } from '../../types/container'
-import type { ContainerRepo, CreateContainerInput } from './types'
+import type {
+  ContainerRepo,
+  CreateContainerInput,
+  LogisticsPatch,
+} from './types'
 
 let nextId = 1
 
@@ -27,6 +31,14 @@ export function createLocalContainerRepo(): ContainerRepo {
         committedAt: null,
         committedBy: null,
         createdAt: now,
+        logisticsStatus: null,
+        bookedAt: null,
+        bookedBy: null,
+        schedule: null,
+        scheduledAt: null,
+        scheduledBy: null,
+        shippedAt: null,
+        shippedBy: null,
       }
       containers = [...containers, container]
       return { ...container }
@@ -54,6 +66,7 @@ export function createLocalContainerRepo(): ContainerRepo {
         ofqReference,
         committedAt: new Date().toISOString(),
         committedBy,
+        logisticsStatus: 'committed',
       }
       containers = [
         ...containers.slice(0, idx),
@@ -71,7 +84,26 @@ export function createLocalContainerRepo(): ContainerRepo {
         ofqReference: null,
         committedAt: null,
         committedBy: null,
+        logisticsStatus: null,
+        bookedAt: null,
+        bookedBy: null,
+        schedule: null,
+        scheduledAt: null,
+        scheduledBy: null,
+        shippedAt: null,
+        shippedBy: null,
       }
+      containers = [
+        ...containers.slice(0, idx),
+        updated,
+        ...containers.slice(idx + 1),
+      ]
+      return { ...updated }
+    },
+    async updateLogistics(id, patch: LogisticsPatch): Promise<Container> {
+      const idx = containers.findIndex((c) => c.id === id)
+      if (idx === -1) throw new Error(`updateLogistics: container ${id} not found`)
+      const updated: Container = { ...containers[idx], ...patch }
       containers = [
         ...containers.slice(0, idx),
         updated,
