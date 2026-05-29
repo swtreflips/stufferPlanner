@@ -3,6 +3,11 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Package, X } from 'lucide-react'
 import { masterLockId } from '../../types/lock'
 import { usePlannerStore } from '../../store/plannerStore'
+import {
+  CbmCeilingError,
+  getCapacityConfig,
+  maxCasesWithinCeiling,
+} from '../../data/containerCapacity'
 
 export default function AllocationDialog() {
   const open = usePlannerStore((s) => s.allocationDialog.open)
@@ -12,6 +17,7 @@ export default function AllocationDialog() {
   const allocations = usePlannerStore((s) => s.allocations)
   const containers = usePlannerStore((s) => s.containers)
   const availableQty = usePlannerStore((s) => s.availableQty)
+  const containerCbm = usePlannerStore((s) => s.containerCbm)
   const addAllocation = usePlannerStore((s) => s.addAllocation)
   const updateAllocation = usePlannerStore((s) => s.updateAllocation)
   const removeAllocation = usePlannerStore((s) => s.removeAllocation)
@@ -87,12 +93,33 @@ export default function AllocationDialog() {
   // PLUS this allocation's existing quantity (which would be replaced on update).
   const cap = globalAvailable + existingQty
 
+  // Structural-ceiling cap: CBM already committed by the container's *other*
+  // allocations leaves only so much headroom for this line. `cbmCap` is the
+  // most cases that still fit; `effectiveCap` is whichever limit binds first.
+  const ceilingConfig = resolved?.container
+    ? getCapacityConfig(resolved.container.type)
+    : null
+  const otherCbm =
+    resolved?.container
+      ? containerCbm(resolved.container.id, resolved.existing?.id ?? null)
+      : 0
+  const cbmPerCase = resolved?.item?.cbmPerCase ?? 0
+  const cbmCap =
+    resolved?.container
+      ? maxCasesWithinCeiling(resolved.container.type, otherCbm, cbmPerCase)
+      : Infinity
+  const effectiveCap = Math.min(cap, cbmCap)
+  const currentContainerCbm = otherCbm + cbmPerCase * existingQty
+  const cbmBinds = Number.isFinite(cbmCap) && cbmCap < cap
+
   const [quantity, setQuantity] = useState<number>(0)
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   // Reset picker selection when the dialog opens fresh.
   useEffect(() => {
     if (!open) return
+    setError(null)
     if (mode?.kind === 'create' && !mode.containerId) {
       setPickedContainerId(eligibleContainers[0]?.id ?? null)
     } else {
@@ -105,9 +132,10 @@ export default function AllocationDialog() {
     if (mode?.kind === 'edit' && resolved.existing) {
       setQuantity(resolved.existing.quantity)
     } else {
-      setQuantity(Math.min(globalAvailable, resolved.item.originalQuantity))
+      // Default to what fits both availability and the structural ceiling.
+      setQuantity(Math.min(globalAvailable, resolved.item.originalQuantity, cbmCap))
     }
-  }, [open, mode, resolved, globalAvailable])
+  }, [open, mode, resolved, globalAvailable, cbmCap])
 
   if (!resolved) {
     return (
@@ -135,7 +163,7 @@ export default function AllocationDialog() {
   const canSubmit =
     !!container &&
     quantity >= minimum &&
-    quantity <= cap &&
+    quantity <= effectiveCap &&
     !submitting &&
     quantity !== existingQty
 
@@ -144,6 +172,7 @@ export default function AllocationDialog() {
     if (!canSubmit || !container) return
     setSubmitting(true)
     try {
+      setError(null)
       if (existing) {
         if (quantity === 0) {
           await removeAllocation(existing.id)
@@ -158,6 +187,11 @@ export default function AllocationDialog() {
         })
       }
       onOpenChange(false)
+    } catch (err) {
+      // The store enforces the structural ceiling as a last-resort invariant.
+      // The cap above normally prevents reaching it; surface it if it ever does.
+      if (err instanceof CbmCeilingError) setError(err.message)
+      else throw err
     } finally {
       setSubmitting(false)
     }
@@ -249,6 +283,16 @@ export default function AllocationDialog() {
               </dd>
               <dt className="text-navy-500 font-semibold">Available for this draft</dt>
               <dd className="text-right text-navy-900 font-mono font-semibold">{cap}</dd>
+              {ceilingConfig ? (
+                <>
+                  <dt className="text-navy-500">Container CBM</dt>
+                  <dd
+                    className={`text-right font-mono ${cbmBinds ? 'text-coral-accent font-semibold' : 'text-navy-900'}`}
+                  >
+                    {currentContainerCbm.toFixed(1)} / {ceilingConfig.maxCbm} m³
+                  </dd>
+                </>
+              ) : null}
             </dl>
           ) : null}
 
@@ -260,7 +304,7 @@ export default function AllocationDialog() {
               <input
                 type="number"
                 min={minimum}
-                max={cap}
+                max={Number.isFinite(effectiveCap) ? effectiveCap : undefined}
                 value={quantity}
                 onChange={(e) => setQuantity(Number(e.target.value))}
                 disabled={!container}
@@ -272,6 +316,20 @@ export default function AllocationDialog() {
                   No cases available. Empty a draft container holding this PO,
                   or uncommit an OFQ to free up quantity.
                 </div>
+              ) : container && effectiveCap === 0 && !isEdit && ceilingConfig ? (
+                <div className="mt-1 text-[10px] text-coral-accent">
+                  {container.type} is at its structural ceiling of{' '}
+                  {ceilingConfig.maxCbm} m³. Use a larger or additional container.
+                </div>
+              ) : container && cbmBinds && ceilingConfig ? (
+                <div className="mt-1 text-[10px] text-coral-accent">
+                  Capped at {cbmCap} cases — the {container.type} structural
+                  ceiling is {ceilingConfig.maxCbm} m³ (container at{' '}
+                  {otherCbm.toFixed(1)} m³).
+                </div>
+              ) : null}
+              {error ? (
+                <div className="mt-1 text-[10px] text-coral-accent">{error}</div>
               ) : null}
             </label>
             <div className="flex justify-between gap-2 pt-2">

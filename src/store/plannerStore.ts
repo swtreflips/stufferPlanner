@@ -17,7 +17,11 @@ import {
   supplierRepo,
 } from '../data/repos'
 import { createPresenceChannel } from '../data/presenceChannel'
-import { getCapacityConfig } from '../data/containerCapacity'
+import {
+  CbmCeilingError,
+  exceedsCeiling,
+  getCapacityConfig,
+} from '../data/containerCapacity'
 
 const LOCK_TTL_MS = 60_000
 const SESSION_ID =
@@ -115,6 +119,7 @@ interface PlannerStore {
   heldLocks(): LockEntry[]
 
   availableQty(masterItemId: string): number
+  containerCbm(containerId: string, excludeAllocationId?: string | null): number
   containersHoldingItem(masterItemId: string): Container[]
   eligibleContainersForMasterItem(masterItemId: string): Container[]
   displayNameById(userId: string | null): string
@@ -196,6 +201,19 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       const existing = get().allocations.find(
         (a) => a.containerId === containerId && a.masterItemId === masterItemId,
       )
+      const container = get().containers.find((c) => c.id === containerId)
+      const item = get().masterItems.find((m) => m.id === masterItemId)
+      if (container && item) {
+        const finalQuantity = (existing?.quantity ?? 0) + quantity
+        const otherCbm = get().containerCbm(containerId, existing?.id ?? null)
+        const projected = otherCbm + item.cbmPerCase * finalQuantity
+        if (exceedsCeiling(container.type, projected)) {
+          const config = getCapacityConfig(container.type)
+          throw new CbmCeilingError(
+            `Allocation would exceed the ${container.type} structural ceiling of ${config?.maxCbm} m³.`,
+          )
+        }
+      }
       if (existing) {
         const newQuantity = existing.quantity + quantity
         await allocationRepo.update(existing.id, newQuantity)
@@ -216,6 +234,25 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     },
 
     async updateAllocation(id, quantity) {
+      const allocation = get().allocations.find((a) => a.id === id)
+      if (allocation) {
+        const container = get().containers.find(
+          (c) => c.id === allocation.containerId,
+        )
+        const item = get().masterItems.find(
+          (m) => m.id === allocation.masterItemId,
+        )
+        if (container && item) {
+          const otherCbm = get().containerCbm(allocation.containerId, id)
+          const projected = otherCbm + item.cbmPerCase * quantity
+          if (exceedsCeiling(container.type, projected)) {
+            const config = getCapacityConfig(container.type)
+            throw new CbmCeilingError(
+              `Update would exceed the ${container.type} structural ceiling of ${config?.maxCbm} m³.`,
+            )
+          }
+        }
+      }
       await allocationRepo.update(id, quantity)
       set((s) => ({
         allocations: s.allocations.map((a) =>
@@ -409,6 +446,13 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       if (item.shipTo !== target.destination) return
       if (item.supplierId !== target.supplierId) return
 
+      // Block moves that would push the target past its structural ceiling. The
+      // moved allocation is not yet in the target, so containerCbm(target)
+      // already accounts for any same-item allocation it will merge into.
+      const projected =
+        get().containerCbm(newContainerId) + item.cbmPerCase * allocation.quantity
+      if (exceedsCeiling(target.type, projected)) return
+
       // Merge into an existing allocation in the target container if one exists
       // for the same master item.
       const existing = get().allocations.find(
@@ -595,6 +639,18 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
         )
         .reduce((sum, a) => sum + a.quantity, 0)
       return item.originalQuantity - item.committedQuantity - allocatedInDrafts
+    },
+
+    containerCbm(containerId, excludeAllocationId = null) {
+      const masterItems = get().masterItems
+      return get()
+        .allocations.filter(
+          (a) => a.containerId === containerId && a.id !== excludeAllocationId,
+        )
+        .reduce((sum, a) => {
+          const item = masterItems.find((m) => m.id === a.masterItemId)
+          return item ? sum + item.cbmPerCase * a.quantity : sum
+        }, 0)
     },
 
     containersHoldingItem(masterItemId) {

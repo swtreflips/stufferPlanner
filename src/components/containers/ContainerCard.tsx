@@ -6,6 +6,7 @@ import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
+import { exceedsCeiling, getCapacityConfig } from '../../data/containerCapacity'
 import AllocationCard from './AllocationCard'
 import ContainerCapacityBar from './ContainerCapacityBar'
 
@@ -17,6 +18,9 @@ interface DraggedItemData {
   type: 'masterItem' | 'allocation'
   shipTo?: string
   supplierId?: string
+  allocationId?: string
+  masterItemId?: string
+  sourceContainerId?: string
 }
 
 function isPlannerDragData(data: unknown): data is DraggedItemData {
@@ -103,7 +107,27 @@ export default function ContainerCard({ container }: Props) {
     dragInfo === null ||
     dragInfo.supplierId === undefined ||
     dragInfo.supplierId === container.supplierId
-  const compatibleDrop = destinationMatches && supplierMatches
+  // Moving an allocation card here from another container would add its CBM on
+  // top of this container's current fill. Block the drop if that breaches the
+  // structural ceiling. Grid-row drags route through the dialog, which enforces
+  // the ceiling itself, so they're never pre-blocked here.
+  const cbmFits = (() => {
+    if (
+      dragInfo?.type !== 'allocation' ||
+      !dragInfo.allocationId ||
+      dragInfo.sourceContainerId === container.id
+    ) {
+      return true
+    }
+    const dragged = allAllocations.find((a) => a.id === dragInfo.allocationId)
+    const draggedItem = dragged
+      ? masterItems.find((m) => m.id === dragged.masterItemId)
+      : undefined
+    if (!dragged || !draggedItem) return true
+    const projected = metrics.totalCbm + draggedItem.cbmPerCase * dragged.quantity
+    return !exceedsCeiling(container.type, projected)
+  })()
+  const compatibleDrop = destinationMatches && supplierMatches && cbmFits
   const showDropAffordance = !isCommitted && active !== null && dragInfo !== null
 
   useEffect(() => {
@@ -183,7 +207,9 @@ export default function ContainerCard({ container }: Props) {
           <div className="text-xs italic text-coral-accent">
             {!destinationMatches
               ? `Destination doesn't match (this container is for ${container.destination}).`
-              : `Supplier doesn't match (this container is bound to one supplier).`}
+              : !supplierMatches
+                ? `Supplier doesn't match (this container is bound to one supplier).`
+                : `Would exceed the ${container.type} ceiling (${getCapacityConfig(container.type)?.maxCbm} m³).`}
           </div>
         ) : allocations.length === 0 ? (
           <div className="text-xs italic text-navy-400">No allocations</div>
