@@ -26,6 +26,10 @@ export default function AllocationCard({ allocation, masterItem, onClick }: Prop
       shipTo: masterItem.shipTo,
       supplierId: masterItem.supplierId,
       sourceContainerId: allocation.containerId,
+      sku: masterItem.sku,
+      documentNumber: masterItem.documentNumber,
+      lineId: masterItem.lineId,
+      quantity: allocation.quantity,
     },
   })
 

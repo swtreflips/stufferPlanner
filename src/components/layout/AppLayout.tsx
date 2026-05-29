@@ -165,7 +165,7 @@ export default function AppLayout() {
           }
         />
       </div>
-      <DragOverlay>
+      <DragOverlay dropAnimation={null} style={{ width: 'auto', height: 'auto' }}>
         <DragOverlayRenderer />
       </DragOverlay>
       <AllocationDialog />
