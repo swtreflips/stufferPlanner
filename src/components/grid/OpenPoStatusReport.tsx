@@ -15,6 +15,7 @@ import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
 import DraggableRowHandle from '../drag/DraggableRowHandle'
+import SetFilter from './SetFilter'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -86,10 +87,10 @@ export default function OpenPoStatusReport() {
           params.data ? <DraggableRowHandle masterItem={params.data} /> : null,
         cellStyle: { padding: 0 },
       },
-      { field: 'name', headerName: 'Name', width: 180 },
+      { field: 'name', headerName: 'Name', width: 180, filter: SetFilter },
       { field: 'documentNumber', headerName: 'Document Number', width: 150 },
-      { field: 'shipTo', headerName: 'Ship To', width: 150 },
-      { field: 'sku', headerName: 'Item', width: 170 },
+      { field: 'shipTo', headerName: 'Ship To', width: 150, filter: SetFilter },
+      { field: 'sku', headerName: 'Item', width: 170, filter: SetFilter },
       {
         field: 'originalQuantity',
         headerName: 'Quantity Remaining',
@@ -139,7 +140,7 @@ export default function OpenPoStatusReport() {
   const defaultColDef = useMemo<ColDef>(
     () => ({
       sortable: true,
-      filter: true,
+      filter: false,
       resizable: true,
     }),
     [],
