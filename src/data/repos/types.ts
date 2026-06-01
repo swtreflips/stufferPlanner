@@ -1,6 +1,7 @@
 import type { MasterItem } from '../../types/masterItem'
 import type {
   Container,
+  ContainerBooking,
   ContainerSchedule,
   ContainerType,
   LogisticsStatus,
@@ -38,6 +39,7 @@ export interface LogisticsPatch {
   logisticsStatus?: LogisticsStatus | null
   bookedAt?: string | null
   bookedBy?: string | null
+  booking?: ContainerBooking | null
   schedule?: ContainerSchedule | null
   scheduledAt?: string | null
   scheduledBy?: string | null

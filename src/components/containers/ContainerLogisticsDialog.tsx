@@ -1,10 +1,39 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Ship, X } from 'lucide-react'
-import type { ContainerSchedule, LogisticsStatus } from '../../types/container'
+import type {
+  ContainerBooking,
+  ContainerSchedule,
+  LogisticsStatus,
+} from '../../types/container'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
+
+interface BookingForm {
+  forwarder: string
+  carrier: string
+  rate: string
+}
+
+const EMPTY_BOOKING_FORM: BookingForm = { forwarder: '', carrier: '', rate: '' }
+
+function toBookingForm(booking: ContainerBooking | null): BookingForm {
+  if (!booking) return EMPTY_BOOKING_FORM
+  return {
+    forwarder: booking.forwarder,
+    carrier: booking.carrier,
+    rate: booking.rate,
+  }
+}
+
+function fromBookingForm(form: BookingForm): ContainerBooking {
+  return {
+    forwarder: form.forwarder.trim(),
+    carrier: form.carrier.trim(),
+    rate: form.rate.trim(),
+  }
+}
 
 interface ScheduleForm {
   carrierName: string
@@ -60,6 +89,7 @@ export default function ContainerLogisticsDialog() {
   const containers = usePlannerStore((s) => s.containers)
   const displayNameById = usePlannerStore((s) => s.displayNameById)
   const markContainerBooked = usePlannerStore((s) => s.markContainerBooked)
+  const updateContainerBooking = usePlannerStore((s) => s.updateContainerBooking)
   const unmarkContainerBooked = usePlannerStore((s) => s.unmarkContainerBooked)
   const setContainerSchedule = usePlannerStore((s) => s.setContainerSchedule)
   const clearContainerSchedule = usePlannerStore((s) => s.clearContainerSchedule)
@@ -73,11 +103,22 @@ export default function ContainerLogisticsDialog() {
   )
 
   const [form, setForm] = useState<ScheduleForm>(EMPTY_SCHEDULE_FORM)
+  const [bookingForm, setBookingForm] = useState<BookingForm>(EMPTY_BOOKING_FORM)
 
   useEffect(() => {
     if (!open) return
     setForm(toForm(container?.schedule ?? null))
-  }, [open, container?.schedule])
+    setBookingForm(toBookingForm(container?.booking ?? null))
+  }, [open, container?.schedule, container?.booking])
+
+  const bookingDirty = useMemo(() => {
+    const current = toBookingForm(container?.booking ?? null)
+    return (
+      current.forwarder !== bookingForm.forwarder ||
+      current.carrier !== bookingForm.carrier ||
+      current.rate !== bookingForm.rate
+    )
+  }, [container?.booking, bookingForm])
 
   const scheduleDirty = useMemo(() => {
     const current = toForm(container?.schedule ?? null)
@@ -106,7 +147,10 @@ export default function ContainerLogisticsDialog() {
     form.pol.trim().length > 0 &&
     form.pod.trim().length > 0
 
-  const handleBook = () => void markContainerBooked(container.id, user.id)
+  const handleBook = () =>
+    void markContainerBooked(container.id, fromBookingForm(bookingForm), user.id)
+  const handleSaveBooking = () =>
+    void updateContainerBooking(container.id, fromBookingForm(bookingForm))
   const handleUnbook = () => void unmarkContainerBooked(container.id)
   const handleSchedule = () => {
     if (!scheduleValid) return
@@ -146,14 +190,46 @@ export default function ContainerLogisticsDialog() {
               caption={
                 container.bookedAt
                   ? `${formatDate(container.bookedAt)} · ${displayNameById(container.bookedBy)}`
-                  : 'Carrier + rate picked'
+                  : ''
               }
             >
+              <div className="space-y-3">
+                <Field label="Forwarder">
+                  <TextInput
+                    value={bookingForm.forwarder}
+                    onChange={(v) => setBookingForm({ ...bookingForm, forwarder: v })}
+                    readOnly={!canEdit || stage === 'scheduled' || stage === 'shipped'}
+                  />
+                </Field>
+                <div className="grid grid-cols-2 gap-x-3">
+                  <Field label="Carrier">
+                    <TextInput
+                      value={bookingForm.carrier}
+                      onChange={(v) => setBookingForm({ ...bookingForm, carrier: v })}
+                      readOnly={!canEdit || stage === 'scheduled' || stage === 'shipped'}
+                    />
+                  </Field>
+                  <Field label="Rate">
+                    <TextInput
+                      value={bookingForm.rate}
+                      onChange={(v) => setBookingForm({ ...bookingForm, rate: v })}
+                      readOnly={!canEdit || stage === 'scheduled' || stage === 'shipped'}
+                    />
+                  </Field>
+                </div>
+              </div>
               {canEdit ? (
                 stage === 'committed' ? (
-                  <PrimaryButton onClick={handleBook}>Mark booked</PrimaryButton>
+                  <div className="flex flex-wrap gap-2 pt-3">
+                    <PrimaryButton onClick={handleBook}>Mark booked</PrimaryButton>
+                  </div>
                 ) : stage === 'booked' ? (
-                  <SecondaryButton onClick={handleUnbook}>Un-book</SecondaryButton>
+                  <div className="flex flex-wrap gap-2 pt-3">
+                    <PrimaryButton onClick={handleSaveBooking} disabled={!bookingDirty}>
+                      Save changes
+                    </PrimaryButton>
+                    <SecondaryButton onClick={handleUnbook}>Un-book</SecondaryButton>
+                  </div>
                 ) : null
               ) : null}
             </Section>
@@ -180,7 +256,6 @@ export default function ContainerLogisticsDialog() {
                         value={form.carrierName}
                         onChange={(v) => setForm({ ...form, carrierName: v })}
                         readOnly={!canEdit}
-                        placeholder="Hapag-Lloyd"
                       />
                     </Field>
                     <Field label="Transit (days)">
@@ -188,7 +263,6 @@ export default function ContainerLogisticsDialog() {
                         value={form.transitTimeDays}
                         onChange={(v) => setForm({ ...form, transitTimeDays: v })}
                         readOnly={!canEdit}
-                        placeholder="7"
                         inputMode="numeric"
                       />
                     </Field>
@@ -197,7 +271,6 @@ export default function ContainerLogisticsDialog() {
                         value={form.pol}
                         onChange={(v) => setForm({ ...form, pol: v })}
                         readOnly={!canEdit}
-                        placeholder="Cartagena"
                       />
                     </Field>
                     <Field label="POD">
@@ -205,11 +278,10 @@ export default function ContainerLogisticsDialog() {
                         value={form.pod}
                         onChange={(v) => setForm({ ...form, pod: v })}
                         readOnly={!canEdit}
-                        placeholder="Miami"
                       />
                     </Field>
                     <Field label="Last CY">
-                      <DateInput
+                      <TextInput
                         value={form.lastCy}
                         onChange={(v) => setForm({ ...form, lastCy: v })}
                         readOnly={!canEdit}

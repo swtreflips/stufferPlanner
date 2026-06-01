@@ -7,6 +7,14 @@ export type ContainerStatus = 'draft' | 'committed'
 // finally ships it. Strictly sequential — see CONTCONFIG.md "Post-commit lifecycle".
 export type LogisticsStatus = 'committed' | 'booked' | 'scheduled' | 'shipped'
 
+// Booking details captured when a committed container is booked. Carried from
+// 'booked' onward; cleared on un-book / uncommit.
+export interface ContainerBooking {
+  forwarder: string             // freight forwarder, e.g. "Flexport"
+  carrier: string               // ocean carrier, e.g. "Hapag-Lloyd"
+  rate: string                  // free-text rate, e.g. "$3,200 / 40HC"
+}
+
 // Confirmed schedule from the forwarder. Carried only at 'scheduled' / 'shipped'.
 // Shape is the seam for the future schedules-project integration; embedded here
 // for now to keep the in-memory model simple.
@@ -14,7 +22,7 @@ export interface ContainerSchedule {
   carrierName: string           // "Hapag-Lloyd", "COSCO", ...
   pol: string                   // port of loading
   pod: string                   // port of discharge
-  lastCy: string | null         // ISO date — last day to drop empty at CY
+  lastCy: string | null         // free text — last day to drop empty at CY
   etd: string | null            // ISO date
   eta: string | null            // ISO date
   transitTimeDays: number | null
@@ -41,6 +49,7 @@ export interface Container {
   logisticsStatus: LogisticsStatus | null
   bookedAt: string | null
   bookedBy: string | null
+  booking: ContainerBooking | null
   schedule: ContainerSchedule | null
   scheduledAt: string | null
   scheduledBy: string | null

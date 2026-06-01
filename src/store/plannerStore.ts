@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { MasterItem } from '../types/masterItem'
 import type {
   Container,
+  ContainerBooking,
   ContainerSchedule,
   ContainerType,
 } from '../types/container'
@@ -95,7 +96,8 @@ interface PlannerStore {
   // Post-commit lifecycle. Each action enforces the source status itself; the
   // dialog wires them to its buttons. *By stamps come from the caller (the
   // current useAuth profile id); Phase 12 swaps to auth.uid() server-side.
-  markContainerBooked(id: string, actorId: string): Promise<void>
+  markContainerBooked(id: string, booking: ContainerBooking, actorId: string): Promise<void>
+  updateContainerBooking(id: string, booking: ContainerBooking): Promise<void>
   unmarkContainerBooked(id: string): Promise<void>
   setContainerSchedule(
     id: string,
@@ -355,14 +357,28 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       set({ supplierFilterId: supplierId })
     },
 
-    async markContainerBooked(id, actorId) {
+    async markContainerBooked(id, booking, actorId) {
       const container = get().containers.find((c) => c.id === id)
       if (!container || container.logisticsStatus !== 'committed') return
       const updated = await containerRepo.updateLogistics(id, {
         logisticsStatus: 'booked',
+        booking,
         bookedAt: new Date().toISOString(),
         bookedBy: actorId,
       })
+      set((s) => ({
+        containers: s.containers.map((c) => (c.id === id ? updated : c)),
+      }))
+    },
+
+    async updateContainerBooking(id, booking) {
+      const container = get().containers.find((c) => c.id === id)
+      if (!container) return
+      // Revise booking details without changing status or stamps. Allowed once
+      // the container carries a booking (booked or later); a no-op on a draft or
+      // freshly-committed container that hasn't been booked yet.
+      if (!container.logisticsStatus || container.logisticsStatus === 'committed') return
+      const updated = await containerRepo.updateLogistics(id, { booking })
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))
@@ -373,6 +389,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       if (!container || container.logisticsStatus !== 'booked') return
       const updated = await containerRepo.updateLogistics(id, {
         logisticsStatus: 'committed',
+        booking: null,
         bookedAt: null,
         bookedBy: null,
       })
