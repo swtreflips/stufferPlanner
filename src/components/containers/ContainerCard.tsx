@@ -163,7 +163,9 @@ export default function ContainerCard({ container }: Props) {
       : !compatibleDrop
         ? isOver
           ? 'border-coral-accent bg-coral-accent/5'
-          : 'border-coral-accent/30 bg-coral-accent/5'
+          : // Incompatible but not hovered: stay neutral — no warning until the
+            // user actually drags over this container.
+            'border-navy-200'
         : isOver
           ? 'border-amber-accent bg-amber-accent/5 ring-2 ring-amber-accent/30'
           : 'border-amber-accent/40 bg-amber-accent/[0.02]'
@@ -203,7 +205,7 @@ export default function ContainerCard({ container }: Props) {
       ) : null}
 
       <div className="px-4 py-3 border-t border-navy-100 min-h-[3.5rem]">
-        {showDropAffordance && !compatibleDrop ? (
+        {showDropAffordance && isOver && !compatibleDrop ? (
           <div className="text-xs italic text-coral-accent">
             {!destinationMatches
               ? `Destination doesn't match (this container is for ${container.destination}).`
