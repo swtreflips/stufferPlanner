@@ -67,6 +67,10 @@ interface PlannerStore {
   commitDialog: CommitDialogState
   logisticsDialog: LogisticsDialogState
 
+  // Admin/Internal supplier focus. null = all suppliers (default). Pure UI
+  // state — factory scoping is handled separately via user.supplierId.
+  supplierFilterId: string | null
+
   // Monotonic per-supplier sequence (supplier code → next number).
   // Never decremented on delete; ensures container codes are stable references.
   containerCodeSequences: Record<string, number>
@@ -108,6 +112,7 @@ interface PlannerStore {
   closeCommitDialog(): void
   openLogisticsDialog(containerId: string): void
   closeLogisticsDialog(): void
+  setSupplierFilter(supplierId: string | null): void
 
   acquireLock(resourceId: string, user: { id: string; displayName: string }): boolean
   releaseLock(resourceId: string): void
@@ -147,6 +152,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     allocationDialog: { open: false, mode: null },
     commitDialog: { open: false, containerId: null },
     logisticsDialog: { open: false, containerId: null },
+    supplierFilterId: null,
     containerCodeSequences: {},
     locks: {},
     mySessionId: SESSION_ID,
@@ -344,6 +350,9 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     },
     closeLogisticsDialog() {
       set({ logisticsDialog: { open: false, containerId: null } })
+    },
+    setSupplierFilter(supplierId) {
+      set({ supplierFilterId: supplierId })
     },
 
     async markContainerBooked(id, actorId) {

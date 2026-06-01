@@ -9,6 +9,31 @@ import {
   maxCasesWithinCeiling,
 } from '../../data/containerCapacity'
 
+/** One metric row in the before → after container projection. */
+function StateRow({
+  label,
+  now,
+  after,
+  changed,
+}: {
+  label: string
+  now: number | string
+  after: number | string
+  changed?: boolean
+}) {
+  return (
+    <div className="flex items-center px-3 py-1.5 text-xs">
+      <span className="flex-1 text-navy-500">{label}</span>
+      <span className="w-16 text-right font-mono tabular-nums text-navy-400">{now}</span>
+      <span
+        className={`w-16 text-right font-mono tabular-nums ${changed ? 'font-semibold text-navy-900' : 'text-navy-700'}`}
+      >
+        {after}
+      </span>
+    </div>
+  )
+}
+
 export default function AllocationDialog() {
   const open = usePlannerStore((s) => s.allocationDialog.open)
   const mode = usePlannerStore((s) => s.allocationDialog.mode)
@@ -87,15 +112,24 @@ export default function AllocationDialog() {
     return { container, item, existing }
   }, [mode, allocations, containers, masterItems, effectiveContainerId])
 
+  const isEdit = mode?.kind === 'edit'
+
   const globalAvailable = resolved ? availableQty(resolved.item.id) : 0
   const existingQty = resolved?.existing?.quantity ?? 0
-  // Max the user can set this allocation to: current global availability
-  // PLUS this allocation's existing quantity (which would be replaced on update).
-  const cap = globalAvailable + existingQty
+  // Quantity semantics depend on the mode:
+  //  - edit: the input is the new TOTAL for this line. The existing quantity is
+  //    released and re-set, so the cap is availability + the existing quantity.
+  //  - create/add: the input is an INCREMENT added on top of any allocation that
+  //    already exists for this (container, item). A second drop of the same row
+  //    is grouped into the first allocation, not a replacement — so the existing
+  //    quantity stays put and the cap is just the remaining availability.
+  const qtyCap = isEdit ? globalAvailable + existingQty : globalAvailable
 
   // Structural-ceiling cap: CBM already committed by the container's *other*
   // allocations leaves only so much headroom for this line. `cbmCap` is the
   // most cases that still fit; `effectiveCap` is whichever limit binds first.
+  // In edit mode the existing line is being replaced, so its CBM is excluded
+  // from the baseline; in add mode it stays, so it counts against the ceiling.
   const ceilingConfig = resolved?.container
     ? getCapacityConfig(resolved.container.type)
     : null
@@ -104,13 +138,24 @@ export default function AllocationDialog() {
       ? containerCbm(resolved.container.id, resolved.existing?.id ?? null)
       : 0
   const cbmPerCase = resolved?.item?.cbmPerCase ?? 0
+  const cbmBaseline = isEdit ? otherCbm : otherCbm + cbmPerCase * existingQty
   const cbmCap =
     resolved?.container
-      ? maxCasesWithinCeiling(resolved.container.type, otherCbm, cbmPerCase)
+      ? maxCasesWithinCeiling(resolved.container.type, cbmBaseline, cbmPerCase)
       : Infinity
-  const effectiveCap = Math.min(cap, cbmCap)
+  const effectiveCap = Math.min(qtyCap, cbmCap)
   const currentContainerCbm = otherCbm + cbmPerCase * existingQty
-  const cbmBinds = Number.isFinite(cbmCap) && cbmCap < cap
+  const cbmBinds = Number.isFinite(cbmCap) && cbmCap < qtyCap
+
+  // Cases of this line that bring the container exactly up to its *operational*
+  // cap (the editable per-container target, below the structural ceiling). Used
+  // to pick the autofill default — not as a hard limit. Infinity when there is
+  // no configured cap or the line contributes no CBM (nothing to cap against).
+  const operationalCap = resolved?.container?.capacityCbm ?? null
+  const opCapCases =
+    operationalCap !== null && cbmPerCase > 0
+      ? Math.max(0, Math.floor((operationalCap - currentContainerCbm + 1e-6) / cbmPerCase))
+      : Infinity
 
   const [quantity, setQuantity] = useState<number>(0)
   const [submitting, setSubmitting] = useState(false)
@@ -132,10 +177,16 @@ export default function AllocationDialog() {
     if (mode?.kind === 'edit' && resolved.existing) {
       setQuantity(resolved.existing.quantity)
     } else {
-      // Default to what fits both availability and the structural ceiling.
-      setQuantity(Math.min(globalAvailable, resolved.item.originalQuantity, cbmCap))
+      // Default to the qty that brings the container up to its operational cap.
+      // If the whole available quantity still fits under the cap, default to the
+      // full max instead. The user can type more — up to the structural ceiling
+      // (effectiveCap) — to intentionally over-fill past the operational cap.
+      const toOpCap = Math.min(effectiveCap, opCapCases)
+      // Keep the form valid (min 1) when the container is already at its cap but
+      // structural room remains; fall to 0 only when nothing can be allocated.
+      setQuantity(toOpCap >= 1 ? toOpCap : Math.min(effectiveCap, 1))
     }
-  }, [open, mode, resolved, globalAvailable, cbmCap])
+  }, [open, mode, resolved, effectiveCap, opCapCases])
 
   if (!resolved) {
     return (
@@ -154,7 +205,32 @@ export default function AllocationDialog() {
   }
 
   const { container, item, existing } = resolved
-  const isEdit = mode?.kind === 'edit'
+
+  // Live container before → after projection. Recomputes from `quantity`, so it
+  // tracks the autofilled max and any edit the user makes.
+  const containerAllocations = container
+    ? allocations.filter((a) => a.containerId === container.id)
+    : []
+  const currentLines = containerAllocations.length
+  const currentCases = containerAllocations.reduce((sum, a) => sum + a.quantity, 0)
+  const currentCbm = currentContainerCbm
+  const safeQty = Number.isFinite(quantity) && quantity > 0 ? quantity : 0
+  // Resulting quantity for this line: add stacks onto the existing, edit replaces.
+  const resultingLineQty = isEdit ? safeQty : existingQty + safeQty
+  const deltaQty = resultingLineQty - existingQty
+  const afterLines =
+    currentLines +
+    (existing ? (resultingLineQty === 0 ? -1 : 0) : safeQty > 0 ? 1 : 0)
+  const afterCases = currentCases + deltaQty
+  const afterCbm = currentCbm + cbmPerCase * deltaQty
+  const opCap = container?.capacityCbm ?? null
+  const beforeRatio = opCap && opCap > 0 ? currentCbm / opCap : 0
+  const afterRatio = opCap && opCap > 0 ? afterCbm / opCap : 0
+  const afterFillTone =
+    afterRatio > 1 ? 'bg-coral-accent' : afterRatio >= 0.85 ? 'bg-amber-accent' : 'bg-teal-accent'
+  const afterTextTone =
+    afterRatio > 1 ? 'text-coral-accent' : afterRatio >= 0.85 ? 'text-amber-accent' : 'text-teal-accent'
+
   const isPickingContainer =
     mode?.kind === 'create' && !mode.containerId && !pickedContainerId
   const noEligibleContainers =
@@ -165,7 +241,9 @@ export default function AllocationDialog() {
     quantity >= minimum &&
     quantity <= effectiveCap &&
     !submitting &&
-    quantity !== existingQty
+    // Edit must change the value; add just needs a positive increment (already
+    // enforced by `minimum`), so no "unchanged" guard there.
+    (isEdit ? quantity !== existingQty : true)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -173,13 +251,17 @@ export default function AllocationDialog() {
     setSubmitting(true)
     try {
       setError(null)
-      if (existing) {
+      if (isEdit && existing) {
+        // Edit replaces this line's quantity (0 removes the allocation).
         if (quantity === 0) {
           await removeAllocation(existing.id)
         } else {
           await updateAllocation(existing.id, quantity)
         }
       } else {
+        // Create adds a new assignment. addAllocation merges by SUMMING into any
+        // existing (container, item) allocation rather than overwriting it, so a
+        // second drop of the same row stacks on top of the first.
         await addAllocation({
           containerId: container.id,
           masterItemId: item.id,
@@ -272,34 +354,79 @@ export default function AllocationDialog() {
           ) : null}
 
           {container ? (
-            <dl className="px-5 py-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-              <dt className="text-navy-500">Original quantity</dt>
-              <dd className="text-right text-navy-900 font-mono">{item.originalQuantity}</dd>
-              <dt className="text-navy-500">Committed (OFQs)</dt>
-              <dd className="text-right text-navy-900 font-mono">{item.committedQuantity}</dd>
-              <dt className="text-navy-500">Allocated in drafts</dt>
-              <dd className="text-right text-navy-900 font-mono">
-                {item.originalQuantity - item.committedQuantity - globalAvailable}
-              </dd>
-              <dt className="text-navy-500 font-semibold">Available for this draft</dt>
-              <dd className="text-right text-navy-900 font-mono font-semibold">{cap}</dd>
-              {ceilingConfig ? (
-                <>
-                  <dt className="text-navy-500">Container CBM</dt>
-                  <dd
-                    className={`text-right font-mono ${cbmBinds ? 'text-coral-accent font-semibold' : 'text-navy-900'}`}
-                  >
-                    {currentContainerCbm.toFixed(1)} / {ceilingConfig.maxCbm} m³
-                  </dd>
-                </>
-              ) : null}
-            </dl>
+            <div className="px-5 py-3 space-y-3">
+              {/* How many cases can still be assigned from this PO line. */}
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-navy-500">
+                  {isEdit
+                    ? 'Available for this line'
+                    : existing
+                      ? 'Available to add'
+                      : 'Available'}
+                </span>
+                <span className="font-mono font-semibold text-navy-900 tabular-nums">
+                  {qtyCap} cases
+                </span>
+              </div>
+
+              {/* Container state before this movement vs. after it lands. */}
+              <div className="rounded-xl border border-navy-200 bg-navy-50/60 overflow-hidden">
+                <div className="flex items-center px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-navy-400 border-b border-navy-100">
+                  <span className="flex-1 text-navy-500">{container.code}</span>
+                  <span className="w-16 text-right">Now</span>
+                  <span className="w-16 text-right">After</span>
+                </div>
+                <StateRow label="Lines" now={currentLines} after={afterLines} changed={afterLines !== currentLines} />
+                <StateRow label="Cases" now={currentCases} after={afterCases} changed={afterCases !== currentCases} />
+                <StateRow
+                  label="CBM (m³)"
+                  now={currentCbm.toFixed(1)}
+                  after={afterCbm.toFixed(1)}
+                  changed={Math.abs(afterCbm - currentCbm) > 1e-6}
+                />
+                {opCap !== null ? (
+                  <div className="px-3 pb-3 pt-1.5">
+                    <div className="relative h-2 rounded-full bg-navy-100 overflow-hidden">
+                      <div
+                        className={`absolute inset-y-0 left-0 rounded-full transition-all duration-300 ${afterFillTone}`}
+                        style={{ width: `${Math.min(afterRatio, 1) * 100}%` }}
+                      />
+                      {/* Marker at the pre-movement level. */}
+                      <div
+                        className="absolute inset-y-0 w-0.5 bg-navy-700"
+                        style={{ left: `calc(${Math.min(beforeRatio, 1) * 100}% - 1px)` }}
+                      />
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-navy-500">
+                      <span>Fill of {opCap} m³</span>
+                      <span>
+                        {Math.round(beforeRatio * 100)}%{' '}
+                        <span className="text-navy-400">→</span>{' '}
+                        <span className={`font-bold ${afterTextTone}`}>
+                          {Math.round(afterRatio * 100)}%
+                        </span>
+                      </span>
+                    </div>
+                    {afterCbm > opCap ? (
+                      <div className="mt-1 text-[10px] text-coral-accent">
+                        Over operational cap by {(afterCbm - opCap).toFixed(1)} m³
+                        {ceilingConfig ? ` · structural ceiling ${ceilingConfig.maxCbm} m³` : ''}.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
           ) : null}
 
           <form onSubmit={handleSubmit} className="px-5 py-4 border-t border-navy-100 space-y-3">
             <label className={`block ${container ? '' : 'opacity-40 pointer-events-none'}`}>
               <span className="block text-[10px] font-mono uppercase tracking-widest text-navy-400 mb-1.5">
-                Cases to allocate {isEdit ? '(set to 0 to remove)' : ''}
+                {isEdit
+                  ? 'Cases to allocate (set to 0 to remove)'
+                  : existing
+                    ? `Cases to add (on top of ${existingQty} already here)`
+                    : 'Cases to allocate'}
               </span>
               <input
                 type="number"
@@ -311,7 +438,7 @@ export default function AllocationDialog() {
                 className="w-full px-3 py-2 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent disabled:cursor-not-allowed"
                 autoFocus={!isPickingContainer}
               />
-              {container && cap === 0 && !isEdit ? (
+              {container && qtyCap === 0 && !isEdit ? (
                 <div className="mt-1 text-[10px] text-coral-accent">
                   No cases available. Empty a draft container holding this PO,
                   or uncommit an OFQ to free up quantity.

@@ -44,9 +44,11 @@ export default function OpenPoStatusReport() {
   const isLockedByOther = usePlannerStore((s) => s.isLockedByOther)
   const acquireLock = usePlannerStore((s) => s.acquireLock)
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
+  const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const { user } = useAuth()
 
-  // Hide fully-committed rows; for factory users, also restrict to their supplier.
+  // Hide fully-committed rows; for factory users, also restrict to their
+  // supplier; for admin/internal, honor the optional supplier focus filter.
   const visibleRows = useMemo(
     () =>
       masterItems.filter((m) => {
@@ -54,9 +56,10 @@ export default function OpenPoStatusReport() {
         if (user.role === 'factory' && user.supplierId) {
           return m.supplierId === user.supplierId
         }
+        if (supplierFilterId) return m.supplierId === supplierFilterId
         return true
       }),
-    [masterItems, user.role, user.supplierId],
+    [masterItems, user.role, user.supplierId, supplierFilterId],
   )
 
   const gridApiRef = useRef<GridApi<MasterItem> | null>(null)

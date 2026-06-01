@@ -16,6 +16,7 @@ export default function ContainerTray() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const containers = usePlannerStore((s) => s.containers)
   const suppliers = usePlannerStore((s) => s.suppliers)
+  const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const { user } = useAuth()
 
   const isFactory = user.role === 'factory' && user.supplierId !== null
@@ -24,13 +25,15 @@ export default function ContainerTray() {
   const { committed, drafts } = useMemo(() => {
     const scoped = isFactory
       ? containers.filter((c) => c.supplierId === factorySupplierId)
-      : containers
+      : supplierFilterId
+        ? containers.filter((c) => c.supplierId === supplierFilterId)
+        : containers
     const sorted = [...scoped].sort((a, b) => a.displayOrder - b.displayOrder)
     return {
       committed: sorted.filter((c) => c.status === 'committed'),
       drafts: sorted.filter((c) => c.status === 'draft'),
     }
-  }, [containers, isFactory, factorySupplierId])
+  }, [containers, isFactory, factorySupplierId, supplierFilterId])
 
   // For admin/internal we cluster by supplier inside each section, with small
   // labels between groups. Factory view skips this since they only see their

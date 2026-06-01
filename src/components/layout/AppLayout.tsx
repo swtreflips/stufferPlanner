@@ -10,6 +10,8 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import SplitPane from './SplitPane'
+import SupplierFilter from './SupplierFilter'
+import logoUrl from '../../assets/logo.png'
 import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
@@ -132,23 +134,18 @@ export default function AppLayout() {
       onDragCancel={handleDragCancel}
     >
       <div className="h-screen w-screen flex flex-col bg-navy-50">
-        <header className="flex items-center justify-between px-6 py-3 bg-navy-900 border-b border-navy-700">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-accent flex items-center justify-center">
-              <span className="text-navy-950 font-mono font-bold text-sm">SP</span>
-            </div>
-            <h1 className="text-lg font-semibold text-navy-100 tracking-tight">
-              Stuffer Planner
-            </h1>
-          </div>
+        <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-navy-200">
+          <img
+            src={logoUrl}
+            alt="Prime Time Packaging"
+            className="h-11 w-auto"
+          />
+          <SupplierFilter />
           <div className="flex items-center gap-3">
             <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-navy-800 text-navy-300 border border-navy-700">
               {openPoCount} open POs
             </span>
             <div className="flex flex-col items-end">
-              <span className="text-xs font-semibold text-navy-100">
-                {user.displayName}
-              </span>
               <span className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
                 {user.role}
                 {user.supplierName ? ` · ${user.supplierName}` : ''}
