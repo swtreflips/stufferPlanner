@@ -132,16 +132,9 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
                 autoFocus
               />
             </Field>
-            {isFactory ? (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-navy-100 bg-navy-50/60">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
-                  Supplier
-                </span>
-                <span className="text-sm font-semibold text-navy-900">
-                  {user.supplierName ?? 'Unknown'}
-                </span>
-              </div>
-            ) : (
+            {/* Factory users are implicitly bound to their own supplier — no
+                control shown. Internal/admin pick from the dropdown. */}
+            {isFactory ? null : (
               <Field label="Supplier">
                 <select
                   value={supplierId}
