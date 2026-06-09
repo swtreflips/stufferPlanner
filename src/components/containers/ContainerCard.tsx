@@ -9,6 +9,7 @@ import { formatDate } from '../../utils/dateHelpers'
 import { exceedsCeiling, getCapacityConfig } from '../../data/containerCapacity'
 import AllocationCard from './AllocationCard'
 import ContainerCapacityBar from './ContainerCapacityBar'
+import { CONTAINER_COL } from './allocationColumns'
 
 interface Props {
   container: Container
@@ -38,7 +39,6 @@ export default function ContainerCard({ container }: Props) {
   const openCommitDialog = usePlannerStore((s) => s.openCommitDialog)
   const uncommitContainer = usePlannerStore((s) => s.uncommitContainer)
   const openLogisticsDialog = usePlannerStore((s) => s.openLogisticsDialog)
-  const displayNameById = usePlannerStore((s) => s.displayNameById)
   const acquireLock = usePlannerStore((s) => s.acquireLock)
   const isLockedByOther = usePlannerStore((s) => s.isLockedByOther)
   const { user } = useAuth()
@@ -173,105 +173,113 @@ export default function ContainerCard({ container }: Props) {
   return (
     <article
       ref={setNodeRef}
-      className={`bg-white rounded-xl shadow-sm border transition-colors ${dropStateClass}`}
+      className={`bg-white rounded-xl shadow-sm border overflow-hidden transition-colors ${dropStateClass}`}
     >
-      <header className="flex items-start justify-between gap-2 p-4 pb-2">
-        <div className="min-w-0">
-          <h3 className="text-base font-bold font-mono tracking-wide text-navy-900">
-            {container.code}
-          </h3>
-          <div className="text-xs text-navy-500 truncate">{container.name}</div>
-          <div className="mt-1 flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-navy-400">
-            <span className="px-1.5 py-0.5 rounded bg-navy-100 text-navy-700">
+      <div className="flex">
+        {/* Container info — the first column */}
+        <div
+          className={`${CONTAINER_COL} shrink-0 p-3 border-r border-navy-100 flex flex-col gap-2`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold font-mono tracking-wide text-navy-900 truncate">
+                {container.code}
+              </h3>
+              <div className="text-[11px] text-navy-500 truncate">{container.name}</div>
+            </div>
+            <StatusBadge container={container} />
+          </div>
+
+          <div className="flex flex-col gap-1 text-[10px] font-mono uppercase tracking-widest text-navy-400">
+            <span className="self-start px-1.5 py-0.5 rounded bg-navy-100 text-navy-700">
               {container.type}
             </span>
-            <span className="flex items-center gap-1 truncate">
+            <span className="flex items-center gap-1 min-w-0">
               <MapPin className="w-3 h-3 shrink-0" />
               <span className="truncate">{container.destination}</span>
             </span>
           </div>
-        </div>
-        <StatusBadge container={container} />
-      </header>
 
-      {isCommitted && container.ofqReference ? (
-        <div className="px-4 pb-2 text-[10px] font-mono uppercase tracking-widest text-teal-accent">
-          {container.ofqReference}
-          {container.committedBy
-            ? ` · by ${displayNameById(container.committedBy)}`
-            : ''}
-          {container.committedAt ? ` · ${formatDate(container.committedAt)}` : ''}
-        </div>
-      ) : null}
+          {isCommitted && container.ofqReference ? (
+            <div className="text-[10px] font-mono uppercase tracking-widest text-teal-accent truncate">
+              {container.ofqReference}
+              {container.committedAt ? ` · ${formatDate(container.committedAt)}` : ''}
+            </div>
+          ) : null}
 
-      <div className="px-4 py-3 border-t border-navy-100 min-h-[3.5rem]">
-        {showDropAffordance && isOver && !compatibleDrop ? (
-          <div className="text-xs italic text-coral-accent">
-            {!destinationMatches
-              ? `Destination doesn't match (this container is for ${container.destination}).`
-              : !supplierMatches
-                ? `Supplier doesn't match (this container is bound to one supplier).`
-                : `Would exceed the ${container.type} ceiling (${getCapacityConfig(container.type)?.maxCbm} m³).`}
+          <div className="space-y-0.5 text-[10px] font-mono uppercase tracking-widest text-navy-500">
+            {metrics.maxCargoReady ? (
+              <div className="truncate">{formatDate(metrics.maxCargoReady)}</div>
+            ) : null}
+            <div>{metrics.totalQty} cases</div>
           </div>
-        ) : allocations.length === 0 ? (
-          <div className="text-xs italic text-navy-400">No allocations</div>
-        ) : (
-          <ul className="space-y-0.5">
-            {allocations.map((a) => {
-              const item = masterItems.find((m) => m.id === a.masterItemId)
-              if (!item) return null
-              return (
-                <li key={a.id}>
-                  <AllocationCard
-                    allocation={a}
-                    masterItem={item}
-                    onClick={
-                      isCommitted
-                        ? undefined
-                        : () => {
-                            const resourceId = masterLockId(item.id)
-                            const blocker = isLockedByOther(resourceId)
-                            if (blocker) {
-                              setDenial(
-                                `${blocker.displayName} is editing this row — try again in a moment.`,
-                              )
-                              return
-                            }
-                            const acquired = acquireLock(resourceId, {
-                              id: user.id,
-                              displayName: user.displayName,
-                            })
-                            if (!acquired) return
-                            openAllocationDialog({
-                              kind: 'edit',
-                              allocationId: a.id,
-                            })
-                          }
-                    }
-                  />
-                </li>
-              )
-            })}
-          </ul>
-        )}
-        {denial ? (
-          <div className="mt-2 text-[10px] text-coral-accent">{denial}</div>
-        ) : null}
-        <div className="mt-2 text-[10px] font-mono uppercase tracking-widest text-navy-500">
-          {metrics.lines} lines · {metrics.totalCbm.toFixed(2)} m³ · {metrics.totalQty} cases
-          {metrics.maxCargoReady ? ` · ready ${formatDate(metrics.maxCargoReady)}` : ''}
+
         </div>
-        <ContainerCapacityBar container={container} totalCbm={metrics.totalCbm} />
-        {isCommitted ? (
-          <LogisticsPillRow
-            stage={logisticsStage}
-            onOpen={() => openLogisticsDialog(container.id)}
-          />
-        ) : null}
+
+        {/* Line items — the table */}
+        <div className="flex-1 min-w-0 py-2 pr-2 flex flex-col">
+          {showDropAffordance && isOver && !compatibleDrop ? (
+            <div className="px-2 py-2 text-xs italic text-coral-accent">
+              {!destinationMatches
+                ? `Destination doesn't match (this container is for ${container.destination}).`
+                : !supplierMatches
+                  ? `Supplier doesn't match (this container is bound to one supplier).`
+                  : `Would exceed the ${container.type} ceiling (${getCapacityConfig(container.type)?.maxCbm} m³).`}
+            </div>
+          ) : allocations.length === 0 ? (
+            <div className="px-2 py-2 text-xs italic text-navy-400">No allocations</div>
+          ) : (
+            <ul className="space-y-0.5">
+              {allocations.map((a) => {
+                const item = masterItems.find((m) => m.id === a.masterItemId)
+                if (!item) return null
+                return (
+                  <li key={a.id}>
+                    <AllocationCard
+                      allocation={a}
+                      masterItem={item}
+                      onClick={
+                        isCommitted
+                          ? undefined
+                          : () => {
+                              const resourceId = masterLockId(item.id)
+                              const blocker = isLockedByOther(resourceId)
+                              if (blocker) {
+                                setDenial(
+                                  `${blocker.displayName} is editing this row — try again in a moment.`,
+                                )
+                                return
+                              }
+                              const acquired = acquireLock(resourceId, {
+                                id: user.id,
+                                displayName: user.displayName,
+                              })
+                              if (!acquired) return
+                              openAllocationDialog({
+                                kind: 'edit',
+                                allocationId: a.id,
+                              })
+                            }
+                      }
+                    />
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          {denial ? (
+            <div className="px-2 mt-1 text-[10px] text-coral-accent">{denial}</div>
+          ) : null}
+
+          {/* Fill bar sits at the bottom of the allocated lines, inside the card. */}
+          <div className="mt-auto px-2 pt-2">
+            <ContainerCapacityBar container={container} totalCbm={metrics.totalCbm} />
+          </div>
+        </div>
       </div>
 
-      <footer className="flex justify-between items-center gap-2 px-4 py-2 border-t border-navy-100">
-        <div className="flex gap-1">
+      <footer className="flex justify-between items-center gap-3 px-4 py-2 border-t border-navy-100">
+        <div className="flex gap-1 shrink-0">
           {!isCommitted ? (
             <>
               {allocations.length > 0 ? (
@@ -304,9 +312,7 @@ export default function ContainerCard({ container }: Props) {
                 onClick={handleUncommit}
                 disabled={uncommitDisabled}
                 title={
-                  uncommitDisabled
-                    ? 'Roll back the logistics stage first'
-                    : undefined
+                  uncommitDisabled ? 'Roll back the logistics stage first' : undefined
                 }
                 className="flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded text-navy-500 hover:text-coral-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-navy-500"
               >
@@ -316,16 +322,25 @@ export default function ContainerCard({ container }: Props) {
             )
           )}
         </div>
-        {!isCommitted && canCommit && allocations.length > 0 ? (
-          <button
-            type="button"
-            onClick={handleCommitClick}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded bg-navy-900 text-navy-50 hover:bg-navy-800 transition-colors"
-          >
-            <FileCheck2 className="w-3.5 h-3.5" />
-            Commit OFQ
-          </button>
-        ) : null}
+        {!isCommitted ? (
+          canCommit && allocations.length > 0 ? (
+            <button
+              type="button"
+              onClick={handleCommitClick}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded bg-navy-900 text-navy-50 hover:bg-navy-800 transition-colors"
+            >
+              <FileCheck2 className="w-3.5 h-3.5" />
+              Commit OFQ
+            </button>
+          ) : null
+        ) : (
+          <div className="flex-1 min-w-0">
+            <LogisticsPillRow
+              stage={logisticsStage}
+              onOpen={() => openLogisticsDialog(container.id)}
+            />
+          </div>
+        )}
       </footer>
     </article>
   )
@@ -354,7 +369,7 @@ function LogisticsPillRow({
     <button
       type="button"
       onClick={onOpen}
-      className="mt-3 w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-navy-50 transition-colors group"
+      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-navy-50 transition-colors group"
       aria-label="Open logistics details"
     >
       <Pill label="Booked" state={pillState('booked')} />

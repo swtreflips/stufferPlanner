@@ -3,6 +3,8 @@ import type { Allocation } from '../../types/allocation'
 import type { MasterItem } from '../../types/masterItem'
 import { masterLockId } from '../../types/lock'
 import { usePlannerStore } from '../../store/plannerStore'
+import { formatDate } from '../../utils/dateHelpers'
+import { LINE_GRID } from './allocationColumns'
 import LockedAvatar from '../presence/LockedAvatar'
 
 interface Props {
@@ -35,8 +37,6 @@ export default function AllocationCard({ allocation, masterItem, onClick }: Prop
 
   const interactive = !!onClick && !lock
 
-  const baseClass =
-    'w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-left transition-colors'
   const stateClass = lock
     ? 'bg-navy-100 cursor-not-allowed'
     : interactive
@@ -53,22 +53,24 @@ export default function AllocationCard({ allocation, masterItem, onClick }: Prop
       disabled={!interactive}
       {...(interactive ? listeners : {})}
       {...(interactive ? attributes : {})}
-      className={`${baseClass} ${stateClass}`}
+      className={`${LINE_GRID} w-full px-2 py-1 rounded text-left text-xs transition-colors ${stateClass}`}
     >
-      <div className="min-w-0">
-        <div className="text-xs font-semibold text-navy-900 truncate">
-          {masterItem.sku}
-        </div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400 truncate">
-          {masterItem.documentNumber} · line {masterItem.lineId}
-        </div>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <span className="min-w-0 truncate font-mono text-navy-600">
+        {masterItem.documentNumber}
+        {masterItem.lineId > 1 ? (
+          <span className="text-navy-400"> ·L{masterItem.lineId}</span>
+        ) : null}
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5">
         {lock ? <LockedAvatar lock={lock} /> : null}
-        <span className="text-xs font-mono font-semibold text-navy-900">
-          × {allocation.quantity}
-        </span>
-      </div>
+        <span className="truncate font-semibold text-navy-900">{masterItem.sku}</span>
+      </span>
+      <span className="text-right font-mono font-semibold tabular-nums text-navy-900">
+        {allocation.quantity}
+      </span>
+      <span className="min-w-0 truncate font-mono text-navy-500">
+        {formatDate(masterItem.cargoReady)}
+      </span>
     </button>
   )
 }

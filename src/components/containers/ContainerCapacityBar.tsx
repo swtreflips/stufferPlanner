@@ -74,8 +74,8 @@ export default function ContainerCapacityBar({ container, totalCbm }: Props) {
         />
       </div>
       <div className="mt-1 flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-navy-500">
-        <span className={`font-bold ${tone}`}>{pct}%</span>
-        <span>of</span>
+        <span className={`font-bold ${tone}`}>{totalCbm.toFixed(1)}</span>
+        <span>/</span>
         {editing ? (
           <input
             type="number"
@@ -121,6 +121,7 @@ export default function ContainerCapacityBar({ container, totalCbm }: Props) {
           <span className="font-bold text-navy-700">{cap}</span>
         )}
         <span>m³</span>
+        <span className={`font-bold ${tone}`}>· {pct}%</span>
         {over ? (
           <span className="text-coral-accent">
             · over by {(totalCbm - cap).toFixed(1)} m³

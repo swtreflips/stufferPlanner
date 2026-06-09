@@ -5,6 +5,7 @@ import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import ContainerCard from './ContainerCard'
 import AddContainerDialog from './AddContainerDialog'
+import { CONTAINER_COL, LINE_GRID, LINE_COLUMNS } from './allocationColumns'
 
 interface SupplierGroup {
   supplierId: string
@@ -71,16 +72,36 @@ export default function ContainerTray() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-3 border-b border-navy-200 bg-white">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
-          Containers
-        </div>
-        <div className="text-lg font-semibold text-navy-900">
-          {committed.length} committed · {drafts.length} drafts
+      {/* Global column header — a dark 40px band that lines up with the master
+          grid header on the right and labels the container-card columns. */}
+      <div className="h-10 shrink-0 flex items-center bg-navy-900 border-b border-navy-700">
+        <div className="flex items-center w-full px-3">
+          <div
+            className={`${CONTAINER_COL} shrink-0 text-[10px] font-mono uppercase tracking-widest text-navy-300`}
+          >
+            Container
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className={`${LINE_GRID} px-2`}>
+              {LINE_COLUMNS.map((c) => (
+                <span
+                  key={c.key}
+                  className={`text-[10px] font-mono uppercase tracking-widest text-navy-300 truncate ${
+                    c.align === 'right' ? 'text-right' : ''
+                  }`}
+                >
+                  {c.label}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-4 space-y-3">
+      <div
+        className="flex-1 overflow-auto px-3 py-3 space-y-3"
+        style={{ scrollbarGutter: 'stable' }}
+      >
         {committed.length === 0 && drafts.length === 0 ? (
           <EmptyState />
         ) : (
@@ -99,7 +120,10 @@ export default function ContainerTray() {
         )}
       </div>
 
-      <div className="border-t border-navy-200 px-4 py-3 bg-white">
+      <div className="border-t border-navy-200 px-3 py-2.5 bg-white space-y-2">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400 text-center">
+          {committed.length} committed · {drafts.length} drafts
+        </div>
         <button
           type="button"
           onClick={() => setDialogOpen(true)}
