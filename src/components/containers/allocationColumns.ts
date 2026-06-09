@@ -11,11 +11,12 @@ export const CONTAINER_COL = 'w-52'
 
 /**
  * The four line-item columns: Document Number · Item · Quantity · Cargo Ready.
- * Fixed edges with a flexible Item column so the left edges stay put as the
- * panel resizes. Used identically by the header labels and the allocation rows.
+ * Proportional tracks so the space spreads evenly instead of dumping all the
+ * slack into Item; minmax(0,…) lets long values truncate rather than overflow.
+ * Used identically by the header labels and the allocation rows.
  */
 export const LINE_GRID =
-  'grid grid-cols-[5.5rem_minmax(0,1fr)_3rem_5.5rem] gap-2 items-center'
+  'grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,1fr)] gap-2 items-center'
 
 export interface LineColumn {
   key: 'documentNumber' | 'sku' | 'quantity' | 'cargoReady'

@@ -77,7 +77,7 @@ export default function ContainerTray() {
       <div className="h-10 shrink-0 flex items-center bg-navy-900 border-b border-navy-700">
         <div className="flex items-center w-full px-3">
           <div
-            className={`${CONTAINER_COL} shrink-0 text-[10px] font-mono uppercase tracking-widest text-navy-300`}
+            className={`${CONTAINER_COL} shrink-0 text-[10px] font-mono uppercase tracking-widest text-navy-100`}
           >
             Container
           </div>
@@ -86,7 +86,7 @@ export default function ContainerTray() {
               {LINE_COLUMNS.map((c) => (
                 <span
                   key={c.key}
-                  className={`text-[10px] font-mono uppercase tracking-widest text-navy-300 truncate ${
+                  className={`text-[10px] font-mono uppercase tracking-widest text-navy-100 truncate ${
                     c.align === 'right' ? 'text-right' : ''
                   }`}
                 >
@@ -170,7 +170,7 @@ function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-3 text-navy-400 pt-12">
       <div className="w-16 h-16 rounded-xl border-2 border-dashed border-navy-300 flex items-center justify-center">
-        <span className="text-2xl font-mono font-bold text-navy-300">+</span>
+        <span className="text-2xl font-mono font-bold text-navy-100">+</span>
       </div>
       <div className="text-center max-w-xs">
         <div className="text-sm font-semibold tracking-wide uppercase text-navy-500">
