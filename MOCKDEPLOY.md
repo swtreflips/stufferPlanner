@@ -256,6 +256,79 @@ Phase 0 (accounts)
                                └─▶ Phase 6 (Cloudflare + bridge) ┘ ──▶ Phase 7 (dry run)
 ```
 
+## Risks & revised slice order
+
+**Keep the full build.** The mock *is* the production infrastructure dress
+rehearsal — the whole point is that flipping to real suppliers later is
+**data-only**: add a `suppliers` row + a `profiles` row + the email to the
+Cloudflare Access policy. No migration, no deploy, no code change. The reorder
+below does **not** cut scope; it proves the risky pieces early so a late surprise
+can't invalidate finished work.
+
+### Design tenet — onboarding a supplier is data, not code
+- New supplier = `INSERT suppliers(name, 2-letter code)` + `INSERT profiles(email,
+  role='factory', supplier_id)` + add the email to the CF Access policy. Nothing
+  else.
+- The whole architecture must honor this: no supplier names/emails hard-coded in
+  app, RLS, or RPCs — everything resolves through the `profiles`/`suppliers`
+  tables and the JWT email claim.
+
+### Top risks — validate early, not at the end
+1. **CF → Supabase identity bridge (highest).** Cloudflare Access isn't a
+   first-class Supabase third-party provider; `role`/`sub` acceptance, token
+   refresh in the `accessToken` callback, and realtime-over-websocket with a
+   third-party token are all unproven here. **Spike it in isolation before the app
+   layer.**
+2. **Email identity vs `auth.users` stamps.** No `auth.users` rows → `auth.uid()`
+   is unusable and `committed_by uuid references auth.users` can't exist. Switch
+   every `*_by` stamp and every RPC to `current_profile().id`; drop the
+   `auth.users` FKs.
+3. **Realtime + optimistic store = reconciliation.** Self-echoes and multi-row
+   commit/move events can render transient inconsistency. Choose a strategy
+   (session-tagged writes ignored on echo, or realtime-as-source-of-truth) before
+   wiring subscriptions.
+
+### Gaps folded in
+- **Two audited write paths now exist** — inline grid edit *and* CSV upload
+  (`updateMasterCargoReady`, `updateMasterCbmPerCase`, `MasterCsvUploadDialog`).
+  Both must go through the Supabase `UPDATE` so the audit trigger fires.
+- **`createContainer` also needs refactoring**: its `<SUP><NNNN>` code is computed
+  client-side today; under Supabase it must come from `next_container_code` inside
+  `SupabaseContainerRepo.create` (the local sequence is racy).
+- **Presence is two mechanisms**: the lock protocol (`lock-add/remove/refresh`,
+  TTL/heartbeat/sweeper) rides Supabase Realtime **Broadcast**; who's-online uses
+  **Presence**. Not a 1:1 transport swap.
+- **Define the `*_factory_set` reset rule** (e.g. cleared on admin edit, or per
+  `import_batches` window) so admin can still correct factory fields via push.
+- **`cargo_ready` as `date`, not `timestamptz`** (calendar date — avoids TZ
+  drift). Add a **reseed/reset script** for iterating the mock.
+- **Vercel-behind-Cloudflare**: the SPA gains an `api/` serverless function, CF
+  SSL must be **Full (strict)**, and Vercel deployment protection should be off so
+  it doesn't double-gate.
+
+### Revised phase order (same scope, de-risked)
+- **Phase 1 — DB + RLS + RPCs** (email identity; `*_by = current_profile().id`).
+  Gate: SQL isolation + audit (unchanged).
+- **Phase 1.5 — Bridge spike (NEW, before any app build):** a throwaway page that
+  pulls the CF token from `/api/cf-token`, calls Supabase **as Silvia**, confirms
+  RLS scopes the result, and receives one realtime event. **Gate:** one
+  CF-authenticated Supabase query + one realtime tick. If it fails, switch to the
+  two-login fallback *now* — not after building the app on a broken assumption.
+- **Phase 2 — Python push** (+ the `*_factory_set` reset lifecycle + reseed script).
+- **Phase 3 — SupabaseRepo set + store refactors** (commit deltas **and**
+  `createContainer` code via RPC) + AuthProvider; route **both** master write paths
+  through Supabase. Gate: local per-user via the proven bridge.
+- **Phase 3.5 — Data-only onboarding check (NEW):** add a temporary 3rd supplier
+  by **rows alone** (suppliers + profiles + CF email), confirm isolation + login,
+  then remove it. This *is* the go-live rehearsal — it proves "plug in a name and
+  email" works.
+- **Phase 4 — Realtime** (with the chosen reconciliation) **+ presence**
+  (Broadcast + Presence).
+- **Phase 5 — Vercel deploy** (api function, SSL Full(strict), protection off).
+- **Phase 6 — Cloudflare Access + domain**, flip `accessToken` to the CF token
+  (bridge already proven in 1.5).
+- **Phase 7 — Operational dry run** + a final plug-in rehearsal for real go-live.
+
 ## Things to keep in mind (so the pieces connect)
 
 - **RLS is the security boundary; the existing UI scoping is cosmetic.** Verify
