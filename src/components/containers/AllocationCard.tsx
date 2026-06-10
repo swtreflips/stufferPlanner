@@ -65,7 +65,7 @@ export default function AllocationCard({ allocation, masterItem, onClick }: Prop
         {lock ? <LockedAvatar lock={lock} /> : null}
         <span className="truncate font-semibold text-navy-900">{masterItem.sku}</span>
       </span>
-      <span className="text-right font-mono font-semibold tabular-nums text-navy-900">
+      <span className="pr-3 text-right font-mono font-semibold tabular-nums text-navy-900">
         {allocation.quantity}
       </span>
       <span className="min-w-0 truncate font-mono text-navy-500">

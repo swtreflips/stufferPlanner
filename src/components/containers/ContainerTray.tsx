@@ -88,7 +88,7 @@ export default function ContainerTray() {
                   key={c.key}
                   className={`text-[10px] font-mono uppercase tracking-widest text-navy-100 truncate ${
                     c.align === 'right' ? 'text-right' : ''
-                  }`}
+                  } ${c.key === 'quantity' ? 'pr-3' : ''}`}
                 >
                   {c.label}
                 </span>
