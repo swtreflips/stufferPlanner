@@ -17,10 +17,10 @@ import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import ContainerTray from '../containers/ContainerTray'
 import DragOverlayRenderer from '../drag/DragOverlayRenderer'
+import { Upload } from 'lucide-react'
 import AllocationDialog from '../containers/AllocationDialog'
 import CommitConfirmDialog from '../containers/CommitConfirmDialog'
 import ContainerLogisticsDialog from '../containers/ContainerLogisticsDialog'
-import MasterToolbar from '../grid/MasterToolbar'
 import MasterCsvUploadDialog from '../grid/MasterCsvUploadDialog'
 import PresenceManager from '../presence/PresenceManager'
 
@@ -52,9 +52,14 @@ export default function AppLayout() {
   const { user } = useAuth()
   const openPoCount = usePlannerStore((s) => s.masterItems.length)
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
+  const openCsvUploadDialog = usePlannerStore((s) => s.openCsvUploadDialog)
   const moveAllocation = usePlannerStore((s) => s.moveAllocation)
   const acquireLock = usePlannerStore((s) => s.acquireLock)
   const releaseLock = usePlannerStore((s) => s.releaseLock)
+
+  // Admin + factory can upload factory CSVs (master-data edits); internal is
+  // read-only on master data, no upload affordance.
+  const canUploadCsv = user.role === 'admin' || user.role === 'factory'
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -144,6 +149,16 @@ export default function AppLayout() {
           />
           <SupplierFilter />
           <div className="flex items-center gap-3">
+            {canUploadCsv ? (
+              <button
+                type="button"
+                onClick={openCsvUploadDialog}
+                className="flex items-center gap-1.5 h-7 px-2.5 rounded text-[10px] font-mono uppercase tracking-widest bg-navy-900 text-navy-50 hover:bg-navy-800 transition-colors"
+              >
+                <Upload className="w-3 h-3" />
+                Upload CSV
+              </button>
+            ) : null}
             <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-navy-800 text-navy-300 border border-navy-700">
               {openPoCount} open POs
             </span>
@@ -158,14 +173,9 @@ export default function AppLayout() {
         <SplitPane
           left={<ContainerTray />}
           right={
-            <div className="h-full w-full flex flex-col">
-              <MasterToolbar />
-              <div className="flex-1 min-h-0">
-                <Suspense fallback={gridLoadingFallback}>
-                  <OpenPoStatusReport />
-                </Suspense>
-              </div>
-            </div>
+            <Suspense fallback={gridLoadingFallback}>
+              <OpenPoStatusReport />
+            </Suspense>
           }
         />
       </div>

@@ -73,6 +73,11 @@ interface PlannerStore {
   logisticsDialog: LogisticsDialogState
   csvUploadDialog: CsvUploadDialogState
 
+  // "Saved" feedback for inline master-grid edits. Key shape:
+  // `${masterItemId}:${field}`. Set briefly after a successful write so the
+  // grid can flash the cell teal; cleared by a timer in markSaved.
+  recentlySavedKey: string | null
+
   // Admin/Internal supplier focus. null = all suppliers (default). Pure UI
   // state — factory scoping is handled separately via user.supplierId.
   supplierFilterId: string | null
@@ -98,6 +103,7 @@ interface PlannerStore {
   // Factory-owned master-data edits. Inline grid + CSV upload both route here.
   updateMasterCargoReady(id: string, isoDate: string): Promise<void>
   updateMasterCbmPerCase(id: string, value: number): Promise<void>
+  markSaved(key: string): void
 
   commitContainer(id: string, ofqReference: string, committedBy: string): Promise<void>
   uncommitContainer(id: string): Promise<void>
@@ -166,6 +172,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     commitDialog: { open: false, containerId: null },
     logisticsDialog: { open: false, containerId: null },
     csvUploadDialog: { open: false },
+    recentlySavedKey: null,
     supplierFilterId: null,
     containerCodeSequences: {},
     locks: {},
@@ -382,6 +389,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
           m.id === id ? { ...m, cargoReady: isoDate } : m,
         ),
       }))
+      get().markSaved(`${id}:cargoReady`)
     },
     async updateMasterCbmPerCase(id, value) {
       await masterItemRepo.updateCbmPerCase(id, value)
@@ -390,6 +398,14 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
           m.id === id ? { ...m, cbmPerCase: value } : m,
         ),
       }))
+      get().markSaved(`${id}:cbmPerCase`)
+    },
+    markSaved(key) {
+      set({ recentlySavedKey: key })
+      setTimeout(() => {
+        // Only clear if no newer save has bumped the key in the meantime.
+        if (get().recentlySavedKey === key) set({ recentlySavedKey: null })
+      }, 1200)
     },
 
     async markContainerBooked(id, booking, actorId) {

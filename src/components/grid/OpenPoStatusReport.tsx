@@ -66,6 +66,7 @@ export default function OpenPoStatusReport() {
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
   const updateMasterCargoReady = usePlannerStore((s) => s.updateMasterCargoReady)
   const updateMasterCbmPerCase = usePlannerStore((s) => s.updateMasterCbmPerCase)
+  const recentlySavedKey = usePlannerStore((s) => s.recentlySavedKey)
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const { user } = useAuth()
 
@@ -94,6 +95,15 @@ export default function OpenPoStatusReport() {
     gridApiRef.current?.refreshCells({ force: true })
     gridApiRef.current?.redrawRows()
   }, [allocations, containers, masterItems])
+
+  // Repaint the two editable columns when the saved-flash key changes so the
+  // teal highlight comes on and off without rebuilding the whole grid.
+  useEffect(() => {
+    gridApiRef.current?.refreshCells({
+      columns: ['cargoReady', 'cbmPerCase'],
+      force: true,
+    })
+  }, [recentlySavedKey])
 
   const columnDefs = useMemo<ColDef<MasterItem>[]>(
     () => [
@@ -144,8 +154,18 @@ export default function OpenPoStatusReport() {
           canEditRow(params.data, user),
         cellEditor: 'agNumberCellEditor',
         cellEditorParams: { precision: 4, min: 0 },
-        cellClass: (params) =>
-          canEditRow(params.data, user) ? 'bg-amber-accent/[0.04]' : '',
+        cellClass: (params) => {
+          const classes: string[] = []
+          if (canEditRow(params.data, user)) classes.push('bg-amber-accent/[0.04]')
+          if (
+            params.data &&
+            params.colDef.field &&
+            recentlySavedKey === `${params.data.id}:${params.colDef.field}`
+          ) {
+            classes.push('!bg-teal-accent/[0.18]')
+          }
+          return classes.join(' ')
+        },
       },
       {
         field: 'cbmTotal',
@@ -163,11 +183,21 @@ export default function OpenPoStatusReport() {
           canEditRow(params.data, user),
         cellEditor: DateCellEditor,
         cellEditorPopup: true,
-        cellClass: (params) =>
-          canEditRow(params.data, user) ? 'bg-amber-accent/[0.04]' : '',
+        cellClass: (params) => {
+          const classes: string[] = []
+          if (canEditRow(params.data, user)) classes.push('bg-amber-accent/[0.04]')
+          if (
+            params.data &&
+            params.colDef.field &&
+            recentlySavedKey === `${params.data.id}:${params.colDef.field}`
+          ) {
+            classes.push('!bg-teal-accent/[0.18]')
+          }
+          return classes.join(' ')
+        },
       },
     ],
-    [availableQty, user],
+    [availableQty, user, recentlySavedKey],
   )
 
   const defaultColDef = useMemo<ColDef>(
