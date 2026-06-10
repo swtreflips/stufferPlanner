@@ -12,6 +12,9 @@ export function createLocalMasterItemRepo(): MasterItemRepo {
     async updateCargoReady(id, isoDate) {
       rows = rows.map((r) => (r.id === id ? { ...r, cargoReady: isoDate } : r))
     },
+    async updateCbmPerCase(id, value) {
+      rows = rows.map((r) => (r.id === id ? { ...r, cbmPerCase: value } : r))
+    },
     async commitQuantity(id, delta) {
       rows = rows.map((r) =>
         r.id === id

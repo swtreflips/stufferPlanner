@@ -20,6 +20,8 @@ import DragOverlayRenderer from '../drag/DragOverlayRenderer'
 import AllocationDialog from '../containers/AllocationDialog'
 import CommitConfirmDialog from '../containers/CommitConfirmDialog'
 import ContainerLogisticsDialog from '../containers/ContainerLogisticsDialog'
+import MasterToolbar from '../grid/MasterToolbar'
+import MasterCsvUploadDialog from '../grid/MasterCsvUploadDialog'
 import PresenceManager from '../presence/PresenceManager'
 
 const OpenPoStatusReport = lazy(() => import('../grid/OpenPoStatusReport'))
@@ -156,9 +158,14 @@ export default function AppLayout() {
         <SplitPane
           left={<ContainerTray />}
           right={
-            <Suspense fallback={gridLoadingFallback}>
-              <OpenPoStatusReport />
-            </Suspense>
+            <div className="h-full w-full flex flex-col">
+              <MasterToolbar />
+              <div className="flex-1 min-h-0">
+                <Suspense fallback={gridLoadingFallback}>
+                  <OpenPoStatusReport />
+                </Suspense>
+              </div>
+            </div>
           }
         />
       </div>
@@ -168,6 +175,7 @@ export default function AppLayout() {
       <AllocationDialog />
       <CommitConfirmDialog />
       <ContainerLogisticsDialog />
+      <MasterCsvUploadDialog />
       <PresenceManager />
     </DndContext>
   )

@@ -13,6 +13,7 @@ import type { Profile } from '../../types/profile'
 export interface MasterItemRepo {
   fetchAll(): Promise<MasterItem[]>
   updateCargoReady(id: string, isoDate: string): Promise<void>
+  updateCbmPerCase(id: string, value: number): Promise<void>
   commitQuantity(id: string, delta: number): Promise<void>
 }
 

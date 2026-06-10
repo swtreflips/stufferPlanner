@@ -3,18 +3,24 @@ import {
   AllCommunityModule,
   ModuleRegistry,
   themeQuartz,
+  type CellDoubleClickedEvent,
+  type CellEditingStartedEvent,
+  type CellEditingStoppedEvent,
   type ColDef,
+  type EditableCallbackParams,
   type GridApi,
   type GridReadyEvent,
   type ICellRendererParams,
 } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
 import type { MasterItem } from '../../types/masterItem'
+import type { Profile } from '../../types/profile'
 import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
 import DraggableRowHandle from '../drag/DraggableRowHandle'
+import DateCellEditor from './DateCellEditor'
 import SetFilter from './SetFilter'
 
 ModuleRegistry.registerModules([AllCommunityModule])
@@ -37,6 +43,18 @@ const formatDateCell = (params: { value: unknown }): string =>
 const formatCbmCell = (params: { value: unknown }): string =>
   typeof params.value === 'number' ? params.value.toFixed(4) : ''
 
+// Cargo Ready + CBM per Case are factory-owned master-data fields. Admin can
+// edit any row; factories edit own-supplier rows only; internal is read-only
+// (they own planning, not master data).
+function canEditRow(item: MasterItem | undefined, user: Profile): boolean {
+  if (!item) return false
+  if (user.role === 'admin') return true
+  if (user.role === 'factory') return item.supplierId === user.supplierId
+  return false
+}
+
+const EDITABLE_FIELDS = new Set(['cargoReady', 'cbmPerCase'])
+
 export default function OpenPoStatusReport() {
   const masterItems = usePlannerStore((s) => s.masterItems)
   const availableQty = usePlannerStore((s) => s.availableQty)
@@ -44,7 +62,10 @@ export default function OpenPoStatusReport() {
   const containers = usePlannerStore((s) => s.containers)
   const isLockedByOther = usePlannerStore((s) => s.isLockedByOther)
   const acquireLock = usePlannerStore((s) => s.acquireLock)
+  const releaseLock = usePlannerStore((s) => s.releaseLock)
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
+  const updateMasterCargoReady = usePlannerStore((s) => s.updateMasterCargoReady)
+  const updateMasterCbmPerCase = usePlannerStore((s) => s.updateMasterCbmPerCase)
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const { user } = useAuth()
 
@@ -119,6 +140,12 @@ export default function OpenPoStatusReport() {
         width: 120,
         type: 'numericColumn',
         valueFormatter: formatCbmCell,
+        editable: (params: EditableCallbackParams<MasterItem>) =>
+          canEditRow(params.data, user),
+        cellEditor: 'agNumberCellEditor',
+        cellEditorParams: { precision: 4, min: 0 },
+        cellClass: (params) =>
+          canEditRow(params.data, user) ? 'bg-amber-accent/[0.04]' : '',
       },
       {
         field: 'cbmTotal',
@@ -132,9 +159,15 @@ export default function OpenPoStatusReport() {
         headerName: 'Cargo Ready',
         width: 130,
         valueFormatter: formatDateCell,
+        editable: (params: EditableCallbackParams<MasterItem>) =>
+          canEditRow(params.data, user),
+        cellEditor: DateCellEditor,
+        cellEditorPopup: true,
+        cellClass: (params) =>
+          canEditRow(params.data, user) ? 'bg-amber-accent/[0.04]' : '',
       },
     ],
-    [availableQty],
+    [availableQty, user],
   )
 
   const defaultColDef = useMemo<ColDef>(
@@ -151,7 +184,13 @@ export default function OpenPoStatusReport() {
     return availableQty(params.data.id) === 0 ? 'opacity-50' : undefined
   }
 
-  const handleRowDoubleClick = (event: { data?: MasterItem }) => {
+  // Cell double-click drives two distinct flows: editing the field (handled by
+  // AG Grid for editable cells) or opening the allocation picker (every other
+  // cell). The editable-field path returns early so the row-level allocation
+  // dialog does not fire on the same gesture.
+  const handleCellDoubleClicked = (event: CellDoubleClickedEvent<MasterItem>) => {
+    const field = event.colDef.field
+    if (field && EDITABLE_FIELDS.has(field)) return
     const item = event.data
     if (!item) return
     if (availableQty(item.id) === 0) return
@@ -161,6 +200,44 @@ export default function OpenPoStatusReport() {
       return
     }
     openAllocationDialog({ kind: 'create', masterItemId: item.id })
+  }
+
+  // Inline edits acquire the master lock for the row at edit start and release
+  // it at edit stop. If another tab already holds the lock, cancel the edit
+  // before the user types anything.
+  const handleCellEditingStarted = (event: CellEditingStartedEvent<MasterItem>) => {
+    const item = event.data
+    if (!item) return
+    const resourceId = masterLockId(item.id)
+    if (isLockedByOther(resourceId)) {
+      event.api.stopEditing(true)
+      return
+    }
+    acquireLock(resourceId, { id: user.id, displayName: user.displayName })
+  }
+
+  const handleCellEditingStopped = (event: CellEditingStoppedEvent<MasterItem>) => {
+    const item = event.data
+    if (!item) return
+    const resourceId = masterLockId(item.id)
+    releaseLock(resourceId)
+
+    if (event.valueChanged !== true) return
+    if (event.colDef.field === 'cargoReady') {
+      const next = event.newValue
+      if (typeof next === 'string' && next) {
+        void updateMasterCargoReady(item.id, next)
+      }
+      return
+    }
+    if (event.colDef.field === 'cbmPerCase') {
+      const next = event.newValue
+      const parsed = typeof next === 'number' ? next : Number(next)
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        void updateMasterCbmPerCase(item.id, parsed)
+      }
+      return
+    }
   }
 
   return (
@@ -175,7 +252,9 @@ export default function OpenPoStatusReport() {
         animateRows
         getRowClass={getRowClass}
         onGridReady={onGridReady}
-        onRowDoubleClicked={handleRowDoubleClick}
+        onCellDoubleClicked={handleCellDoubleClicked}
+        onCellEditingStarted={handleCellEditingStarted}
+        onCellEditingStopped={handleCellEditingStopped}
       />
     </div>
   )

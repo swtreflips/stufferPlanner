@@ -723,6 +723,16 @@ Goal:
 
 ## Phase 10 -- Role-Based Permissions Enforcement
 
+**Status: shipped** — inline grid editing for the two factory-owned master
+fields (`cargoReady`, `cbmPerCase`) lives in
+[OpenPoStatusReport](src/components/grid/OpenPoStatusReport.tsx) behind a
+`canEditRow` gate (admin: any row; factory: own-supplier rows; internal:
+read-only). Editable cells acquire the existing master-item lock at edit
+start and release on stop. Double-click on non-editable cells still opens
+the allocation picker (handler swapped from `onRowDoubleClicked` to
+`onCellDoubleClicked`). `cbmTotal` editing intentionally deferred — only
+`cargoReady` + `cbmPerCase` shipped this round.
+
 Goal:
 
 All three roles render the **same** `AppLayout` (container tray on the left,
@@ -778,6 +788,23 @@ subscriptions are wired.
 ---
 
 ## Phase 10.5 -- Factory CSV Upload
+
+**Status: shipped** with two deliberate deltas from the original spec:
+
+1. **Visible to admin too**, not factory-only. The planning team receives
+   the same CSVs by email today and uploads on factories' behalf during
+   adoption; the toolbar respects that operational reality. Internal stays
+   read-only.
+2. **Match key is `(documentNumber, sku)`**, not `(documentNumber, lineId)`.
+   Real factory CSVs have blank Line IDs on most rows (parser defaults to 1),
+   which makes lineId-matching silently mis-match. SKU is what factories
+   actually print in the "Item" column.
+
+Implementation: [MasterToolbar](src/components/grid/MasterToolbar.tsx),
+[MasterCsvUploadDialog](src/components/grid/MasterCsvUploadDialog.tsx),
+[csvUploadParser](src/utils/csvUploadParser.ts). Routes through
+`updateMasterCargoReady` / `updateMasterCbmPerCase` store actions. No `sonner`
+dependency added — success feedback is inline in the dialog.
 
 Goal:
 

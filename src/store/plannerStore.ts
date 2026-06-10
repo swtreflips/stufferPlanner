@@ -58,6 +58,10 @@ interface LogisticsDialogState {
   containerId: string | null
 }
 
+interface CsvUploadDialogState {
+  open: boolean
+}
+
 interface PlannerStore {
   masterItems: MasterItem[]
   containers: Container[]
@@ -67,6 +71,7 @@ interface PlannerStore {
   allocationDialog: AllocationDialogState
   commitDialog: CommitDialogState
   logisticsDialog: LogisticsDialogState
+  csvUploadDialog: CsvUploadDialogState
 
   // Admin/Internal supplier focus. null = all suppliers (default). Pure UI
   // state — factory scoping is handled separately via user.supplierId.
@@ -89,6 +94,10 @@ interface PlannerStore {
   updateAllocation(id: string, quantity: number): Promise<void>
   removeAllocation(id: string): Promise<void>
   moveAllocation(allocationId: string, newContainerId: string): Promise<void>
+
+  // Factory-owned master-data edits. Inline grid + CSV upload both route here.
+  updateMasterCargoReady(id: string, isoDate: string): Promise<void>
+  updateMasterCbmPerCase(id: string, value: number): Promise<void>
 
   commitContainer(id: string, ofqReference: string, committedBy: string): Promise<void>
   uncommitContainer(id: string): Promise<void>
@@ -114,6 +123,8 @@ interface PlannerStore {
   closeCommitDialog(): void
   openLogisticsDialog(containerId: string): void
   closeLogisticsDialog(): void
+  openCsvUploadDialog(): void
+  closeCsvUploadDialog(): void
   setSupplierFilter(supplierId: string | null): void
 
   acquireLock(resourceId: string, user: { id: string; displayName: string }): boolean
@@ -154,6 +165,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     allocationDialog: { open: false, mode: null },
     commitDialog: { open: false, containerId: null },
     logisticsDialog: { open: false, containerId: null },
+    csvUploadDialog: { open: false },
     supplierFilterId: null,
     containerCodeSequences: {},
     locks: {},
@@ -353,8 +365,31 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     closeLogisticsDialog() {
       set({ logisticsDialog: { open: false, containerId: null } })
     },
+    openCsvUploadDialog() {
+      set({ csvUploadDialog: { open: true } })
+    },
+    closeCsvUploadDialog() {
+      set({ csvUploadDialog: { open: false } })
+    },
     setSupplierFilter(supplierId) {
       set({ supplierFilterId: supplierId })
+    },
+
+    async updateMasterCargoReady(id, isoDate) {
+      await masterItemRepo.updateCargoReady(id, isoDate)
+      set((s) => ({
+        masterItems: s.masterItems.map((m) =>
+          m.id === id ? { ...m, cargoReady: isoDate } : m,
+        ),
+      }))
+    },
+    async updateMasterCbmPerCase(id, value) {
+      await masterItemRepo.updateCbmPerCase(id, value)
+      set((s) => ({
+        masterItems: s.masterItems.map((m) =>
+          m.id === id ? { ...m, cbmPerCase: value } : m,
+        ),
+      }))
     },
 
     async markContainerBooked(id, booking, actorId) {
