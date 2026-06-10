@@ -10,7 +10,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/admin" replace />} />
           <Route path="/admin" element={<AppLayout />} />
           <Route path="/internal" element={<AppLayout />} />
-          <Route path="/factory" element={<Navigate to="/factory/ditar" replace />} />
+          <Route path="/factory" element={<Navigate to="/factory/apple" replace />} />
           <Route path="/factory/:supplierSlug" element={<AppLayout />} />
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>

@@ -17,8 +17,8 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 function resolveUserFromPath(pathname: string): Profile {
   if (pathname.startsWith('/factory')) {
     const factoryProfiles = sampleProfiles.filter((p) => p.role === 'factory')
-    // Extract the slug after /factory/ (e.g. /factory/ditar → "ditar").
-    const segments = pathname.split('/').filter(Boolean) // ["factory", "ditar"]
+    // Extract the slug after /factory/ (e.g. /factory/apple → "apple").
+    const segments = pathname.split('/').filter(Boolean) // ["factory", "apple"]
     const slug = segments[1]?.toLowerCase()
     if (slug) {
       const match = factoryProfiles.find((p) =>
