@@ -1,4 +1,4 @@
-# Mock deployment: Supabase backend + RLS + audit + Python push + Cloudflare SSO
+# Mock deployment: Supabase backend + RLS + audit + Python push + Cloudflare gate + magic-link
 
 ## Context
 
@@ -11,33 +11,47 @@ technical + operational gaps. Requirements:
 - **Update history** for the factory-editable fields (who changed cargo-ready /
   CBM, and **when**) — CONTCONFIG currently says "no audit trail"; this adds one.
 - **Weekly Monday Python push** of new POs (with org names) into Supabase.
-- **One email login** gated by **Cloudflare Zero Trust**; no second password.
+- **Two passwordless layers**: **Cloudflare Zero Trust** gates the network (who can
+  reach the URL) and **Supabase magic-link** establishes the data session (who RLS
+  scopes). Same email in both; no password anywhere.
 - Decisions: build **full end-to-end**; audit **all three** factory fields; host
-  on **Vercel behind a Cloudflare-proxied domain**; identity = **Cloudflare
-  Access bridged into Supabase** (no separate Supabase login).
+  on **Vercel behind a Cloudflare-proxied domain**; identity = **Cloudflare Access
+  (network gate) + Supabase magic-link (data session)** — two independent layers,
+  no token bridge.
 
 Most of the target schema/RLS/RPCs already live in [CONTCONFIG.md](CONTCONFIG.md)
 "Identity & RLS" / "Backend operations"; this plan adapts them to email-based
-Cloudflare identity and adds the audit trail, the users, the push, and CF.
+magic-link identity behind a Cloudflare gate and adds the audit trail, the users,
+the push, and CF.
 
-## Identity & login — why Cloudflare alone isn't enough, and the bridge
+## Identity & login — two independent layers, not a bridge
 
-Cloudflare Access authenticates the person (email) and gates the network, issuing
-a signed JWT. Supabase RLS executes in Postgres and must resolve `auth.uid()` /
-`auth.jwt()` to scope rows — it cannot see Cloudflare's session. Bridge them so
-there's **one login**:
+Cloudflare Access authenticates the person (email) and gates the network, issuing a
+signed JWT — but that only controls **who can reach the URL**. Supabase RLS runs in
+Postgres and must resolve the caller to scope rows; it cannot see Cloudflare's
+session. Rather than bridge Cloudflare's token into Supabase (fragile — CF isn't a
+first-class Supabase provider, and the token/refresh/realtime path is unproven), we
+run **two independent passwordless layers**:
 
-1. Register **Cloudflare Access as a Supabase third-party auth provider**
-   (issuer `https://<team>.cloudflareaccess.com`, its JWKS, the Access app `aud`).
-2. A tiny same-origin **`/api/cf-token`** Vercel function (sitting behind the same
-   Access app) echoes back the `Cf-Access-Jwt-Assertion` request header that
-   Cloudflare injects. The SPA fetches it and hands it to supabase-js via
-   `createClient(url, anon, { accessToken: async () => cfJwt })`.
-3. RLS resolves the user by **email claim**: `auth.jwt()->>'email'` → `profiles`.
-   No Supabase `auth.users`, no magic-link redirect allowlist to manage.
+1. **Cloudflare Zero Trust — network gate (login layer 1).** An Access app on the
+   hostname allows only the four emails; anyone else can't load the page at all.
+   It issues no identity that Supabase consumes — it just decides who reaches the URL.
+2. **Supabase magic-link — data session (login layer 2).** Once the page loads, the
+   SPA checks for a Supabase session; if none, it shows a "send me a link" screen.
+   The user enters their email, clicks the link, and Supabase creates a real
+   `auth.users` row + session. This is the session RLS actually reads.
+3. RLS resolves the user by **email claim**: `auth.jwt()->>'email'` (a.k.a.
+   `auth.email()`) → `profiles`. Email-based, not `auth.uid()`-based, because Silvia
+   & Luis share a domain and identity must be per-email.
 
-Fallback if the token bridge proves fiddly during the mock: keep CF Access as the
-network gate **and** add Supabase magic-link (two passwordless steps, same email).
+**Why both, and the UX cost.** Cloudflare keeps strangers off the URL entirely (RLS
+alone would still serve the login page to the world); Supabase gives Postgres a
+real, native session it understands — no third-party-token uncertainty, realtime
+"just works", and `auth.users` stays alive. The cost is **two logins on first
+visit**. It's mitigated because both sessions are long-lived (Cloudflare Access
+session duration and Supabase refresh tokens both persist for days/weeks), so after
+the first visit it's effectively one click or zero. Magic-link is passwordless, so
+there is still no password to manage anywhere.
 
 ## Users & orgs (seed)
 
@@ -63,8 +77,10 @@ choices/additions:
 - `suppliers(id uuid pk, name unique, code text unique check 2-letter, created_at)`.
 - `profiles(id uuid pk default gen_random_uuid(), email citext unique not null,
   display_name, role check(admin|internal|factory), supplier_id fk null,
-  org_name text, created_at, constraint factory_has_supplier)`. **No FK to
-  auth.users** (identity comes from CF email).
+  org_name text, created_at, constraint factory_has_supplier)`. Keyed by **email**
+  and linked to the magic-link session via the email claim — **no hard FK to
+  auth.users** (profiles are seeded *before* a user's first magic-link login, which
+  is when their `auth.users` row is created). `*_by` stamps reference `profiles(id)`.
 - `master_items` per CONTCONFIG: `supplier_id` FK **not null**, dates as
   `timestamptz`, `raw jsonb`, `original_quantity`/`committed_quantity` with the
   `committed_le_original` check. Add `cargo_ready_factory_set boolean default
@@ -116,9 +132,11 @@ caller is a factory, so the Python push can preserve factory edits.
 
 ## 5. Front-end integration (full end-to-end)
 
-- Add `@supabase/supabase-js`; create **`src/lib/supabase.ts`** singleton with the
-  `accessToken` bridge above.
-- **`api/cf-token.ts`** (Vercel function) returning the Cloudflare Access JWT.
+- Add `@supabase/supabase-js`; create **`src/lib/supabase.ts`** singleton — a plain
+  client using the native Supabase session (no `accessToken` override, no bridge).
+- **Magic-link sign-in screen**: shown when there's no Supabase session — "enter
+  your email → check your inbox". `supabase.auth.signInWithOtp({ email })`; handle
+  the session on the redirect back.
 - **`SupabaseRepo` set** implementing the 5 interfaces in
   [repos/types.ts](src/data/repos/types.ts), with a snake_case↔camelCase +
   `timestamptz`↔ISO mapping layer; wire the `'supabase'` branch in
@@ -131,9 +149,10 @@ caller is a factory, so the Python push can preserve factory edits.
   backends stay identical). The container-code sequence likewise moves into
   `SupabaseContainerRepo.create` via the RPC (local `containerCodeSequences`
   becomes a no-op under Supabase).
-- **AuthProvider**: replace the URL resolver with: read the CF email, fetch the
-  `Profile` via `profileRepo` by email, expose the same `AuthContextValue`
-  (consumers unchanged) + a loading state.
+- **AuthProvider**: replace the URL resolver with: on Supabase `auth` state change,
+  read the session email (`supabase.auth.getUser()`), fetch the `Profile` via
+  `profileRepo` by email, expose the same `AuthContextValue` (consumers unchanged) +
+  loading / signed-out states. No session → render the magic-link screen.
 - **Realtime**: subscribe to `master_items`, `containers`,
   `container_allocations`; upsert-by-id into the store (idempotent, so optimistic
   local writes + realtime echoes don't duplicate).
@@ -158,10 +177,12 @@ caller is a factory, so the Python push can preserve factory edits.
 - Deploy to Vercel; add custom domain **planner.primetimepackaging.com** on
   Cloudflare DNS (proxied / orange-cloud).
 - Zero Trust → Access → self-hosted application on that hostname; policy **allow**
-  the four emails (or the two domains). `/api/cf-token` lives behind the same app
-  so CF injects the assertion header.
-- Supabase: configure the third-party auth provider (CF issuer + JWKS + `aud`).
-  No magic-link redirect allowlist needed.
+  the four emails (or the two domains). This is purely the network gate — no
+  `/api/cf-token`, no assertion header consumed by the app.
+- Supabase: enable the **magic-link (email OTP) provider** and add the production
+  domain **and every Vercel preview URL** to the auth **redirect allowlist**
+  (wildcard e.g. `https://*.vercel.app`). No third-party auth provider, no
+  JWKS/`aud`.
 
 ## Execution roadmap — what must be ready before what
 
@@ -196,18 +217,18 @@ passes.
 - **Gate (Verification #4):** push a batch → new lines appear, a factory-edited
   cargo-ready survives the push, an `import_batches` row is written.
 
-### Phase 3 — App data layer against Supabase (still local, dev identity)
-- **Depends on:** Phase 1 green. **Key unblock:** a **dev identity shim** so you can
-  exercise RLS locally before Cloudflare exists — either Supabase magic-link for
-  the 4 emails, or a short-lived dev JWT (signed with the Supabase JWT secret)
-  carrying a chosen `email` claim. Build this first in this phase.
-- **Do:** add `@supabase/supabase-js`; `src/lib/supabase.ts` with a **pluggable
-  `accessToken` source** (dev shim now, CF later); the 5 `SupabaseRepo`s + mapping
-  layer; the **commit-path refactor** in `plannerStore.ts`; `AuthProvider` resolves
-  `Profile` by email; flip `VITE_DATA_SOURCE=supabase`.
-- **Gate (Verification #3, run locally):** log in as each user via the shim →
-  correct scope, commit works and moves `committed_quantity` atomically, a
-  cargo-ready edit lands an audit row. Local-only; no Cloudflare yet.
+### Phase 3 — App data layer against Supabase (local, magic-link identity)
+- **Depends on:** Phase 1 green. **Key unblock:** magic-link *is* the real identity
+  path, so it doubles as the local dev login — sign in as each of the 4 emails
+  against the live Supabase project from localhost (add `http://localhost:5173` to
+  the redirect allowlist). No throwaway shim or hand-signed dev JWT needed.
+- **Do:** add `@supabase/supabase-js`; `src/lib/supabase.ts` (plain native-session
+  client); the magic-link sign-in screen; the 5 `SupabaseRepo`s + mapping layer; the
+  **commit-path refactor** in `plannerStore.ts`; `AuthProvider` resolves `Profile`
+  by session email; flip `VITE_DATA_SOURCE=supabase`.
+- **Gate (Verification #3, run locally):** magic-link in as each user → correct
+  scope, commit works and moves `committed_quantity` atomically, a cargo-ready edit
+  lands an audit row. Local-only; no Cloudflare yet.
 
 ### Phase 4 — Realtime + cross-user presence
 - **Depends on:** Phase 3 (working data layer + identity).
@@ -217,24 +238,26 @@ passes.
 - **Gate (Verification #5, two local browsers):** an action by one user shows live
   for the other; one editing a row blocks the other with the lock UI.
 
-### Phase 5 — Deploy to Vercel (no gating yet)
+### Phase 5 — Deploy to Vercel (Supabase auth live, no network gate yet)
 - **Depends on:** Phase 3 (4 optional but recommended).
 - **Do:** deploy; set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
-  `VITE_DATA_SOURCE=supabase` in Vercel; ship the `/api/cf-token` function.
-- **Gate:** the app loads on the `*.vercel.app` URL and reaches Supabase. Full auth
-  is *expected to be incomplete* here — `/api/cf-token` only works once Cloudflare
-  is in front (Phase 6).
+  `VITE_DATA_SOURCE=supabase` in Vercel; add the `*.vercel.app` URL to the Supabase
+  redirect allowlist.
+- **Gate:** the app loads on the `*.vercel.app` URL and a magic-link login scopes
+  data correctly. Supabase auth is fully working here; the only thing missing is the
+  Cloudflare network gate (Phase 6), so the URL is still publicly reachable.
 
-### Phase 6 — Cloudflare Zero Trust + the identity bridge (go-live gate)
+### Phase 6 — Cloudflare Zero Trust network gate (go-live gate)
 - **Depends on:** Phase 5 deployed.
 - **Do, in order:** (1) custom domain `planner.primetimepackaging.com` on
   Cloudflare, proxied to Vercel → (2) Zero Trust Access app on that hostname +
-  policy allowing the four emails → (3) Supabase third-party auth provider (CF
-  issuer + JWKS + `aud`) → (4) switch the app's `accessToken` source from the dev
-  shim to the real CF token from `/api/cf-token`.
+  policy allowing the four emails → (3) add the production domain to the Supabase
+  redirect allowlist. No bridge, no third-party provider — Supabase magic-link is
+  unchanged from Phase 5; Cloudflare simply fronts it.
 - **Gate (Verification #3, now end-to-end):** open the domain as each email →
-  **single login**, correct scope; admin full, internal commit-not-uncommit,
-  factory own-supplier only. Anyone outside the four emails can't even reach the app.
+  Cloudflare gate, then magic-link, correct scope; admin full, internal
+  commit-not-uncommit, factory own-supplier only. Anyone outside the four emails
+  can't even reach the app.
 
 ### Phase 7 — Operational dry run
 - **Depends on:** Phase 6 green.
@@ -253,7 +276,7 @@ Phase 0 (accounts)
           └─▶ Phase 3 (SupabaseRepo + dev identity) ─────────────┤
                  └─▶ Phase 4 (realtime + presence)               │
                         └─▶ Phase 5 (Vercel deploy)              │
-                               └─▶ Phase 6 (Cloudflare + bridge) ┘ ──▶ Phase 7 (dry run)
+                               └─▶ Phase 6 (Cloudflare gate)     ┘ ──▶ Phase 7 (dry run)
 ```
 
 ## Risks & revised slice order
@@ -274,15 +297,18 @@ can't invalidate finished work.
   tables and the JWT email claim.
 
 ### Top risks — validate early, not at the end
-1. **CF → Supabase identity bridge (highest).** Cloudflare Access isn't a
-   first-class Supabase third-party provider; `role`/`sub` acceptance, token
-   refresh in the `accessToken` callback, and realtime-over-websocket with a
-   third-party token are all unproven here. **Spike it in isolation before the app
-   layer.**
-2. **Email identity vs `auth.users` stamps.** No `auth.users` rows → `auth.uid()`
-   is unusable and `committed_by uuid references auth.users` can't exist. Switch
-   every `*_by` stamp and every RPC to `current_profile().id`; drop the
-   `auth.users` FKs.
+1. **Magic-link redirect + email deliverability (highest).** Supabase must carry
+   the production domain *and* every Vercel preview URL in its redirect allowlist,
+   or the link 404s after the click. Confirm magic-link emails actually land (not
+   spam) for `@primetimepackaging.com` / `@ptpbags.com`, and that the Cloudflare
+   Access gate doesn't interfere with the click-through (the redirect target is
+   behind the same Access app — the user is already gated, but verify). **Spike it
+   with one real inbox before the app layer.**
+2. **Stamp identity from `profiles`, not `auth.users`.** Magic-link *does* create
+   `auth.users` rows, so `auth.uid()` works — but profiles are seeded *ahead* of a
+   user's first login and keyed by email, so stamp every `*_by` and every RPC with
+   `current_profile().id` (email-resolved) for stability. `committed_by` references
+   `profiles(id)`, not `auth.users`. Keep `profiles` the single identity source.
 3. **Realtime + optimistic store = reconciliation.** Self-echoes and multi-row
    commit/move events can render transient inconsistency. Choose a strategy
    (session-tagged writes ignored on echo, or realtime-as-source-of-truth) before
@@ -302,22 +328,22 @@ can't invalidate finished work.
   `import_batches` window) so admin can still correct factory fields via push.
 - **`cargo_ready` as `date`, not `timestamptz`** (calendar date — avoids TZ
   drift). Add a **reseed/reset script** for iterating the mock.
-- **Vercel-behind-Cloudflare**: the SPA gains an `api/` serverless function, CF
-  SSL must be **Full (strict)**, and Vercel deployment protection should be off so
-  it doesn't double-gate.
+- **Vercel-behind-Cloudflare**: CF SSL must be **Full (strict)**, and Vercel
+  deployment protection should be off so it doesn't double-gate. No `api/`
+  serverless function is needed — magic-link replaces the token-echo endpoint.
 
 ### Revised phase order (same scope, de-risked)
 - **Phase 1 — DB + RLS + RPCs** (email identity; `*_by = current_profile().id`).
   Gate: SQL isolation + audit (unchanged).
-- **Phase 1.5 — Bridge spike (NEW, before any app build):** a throwaway page that
-  pulls the CF token from `/api/cf-token`, calls Supabase **as Silvia**, confirms
-  RLS scopes the result, and receives one realtime event. **Gate:** one
-  CF-authenticated Supabase query + one realtime tick. If it fails, switch to the
-  two-login fallback *now* — not after building the app on a broken assumption.
+- **Phase 1.5 — Magic-link spike (NEW, before any app build):** a throwaway page
+  that runs `signInWithOtp` for one real inbox, confirms the email lands and the
+  redirect completes, then calls Supabase **as Silvia**, confirms RLS scopes the
+  result, and receives one realtime event. **Gate:** one magic-link login + one
+  RLS-scoped query + one realtime tick. Proves the email path before building on it.
 - **Phase 2 — Python push** (+ the `*_factory_set` reset lifecycle + reseed script).
 - **Phase 3 — SupabaseRepo set + store refactors** (commit deltas **and**
   `createContainer` code via RPC) + AuthProvider; route **both** master write paths
-  through Supabase. Gate: local per-user via the proven bridge.
+  through Supabase. Gate: local per-user via the proven magic-link path.
 - **Phase 3.5 — Data-only onboarding check (NEW):** add a temporary 3rd supplier
   by **rows alone** (suppliers + profiles + CF email), confirm isolation + login,
   then remove it. This *is* the go-live rehearsal — it proves "plug in a name and
@@ -325,8 +351,9 @@ can't invalidate finished work.
 - **Phase 4 — Realtime** (with the chosen reconciliation) **+ presence**
   (Broadcast + Presence).
 - **Phase 5 — Vercel deploy** (api function, SSL Full(strict), protection off).
-- **Phase 6 — Cloudflare Access + domain**, flip `accessToken` to the CF token
-  (bridge already proven in 1.5).
+- **Phase 6 — Cloudflare Access + domain** as the network gate in front of the
+  already-working Supabase magic-link auth (no bridge to flip; magic-link proven
+  in 1.5).
 - **Phase 7 — Operational dry run** + a final plug-in rehearsal for real go-live.
 
 ## Things to keep in mind (so the pieces connect)
@@ -346,7 +373,8 @@ can't invalidate finished work.
 ## Files
 
 - `supabase/migrations/0001_init.sql`, `supabase/seed.sql`
-- `src/lib/supabase.ts`, `api/cf-token.ts`
+- `src/lib/supabase.ts` (plain native-session client) + magic-link sign-in screen
+  (no `api/cf-token.ts`)
 - `src/data/repos/Supabase{MasterItem,Container,Allocation,Supplier,Profile}Repo.ts`
   + `src/data/repos/index.ts` wiring
 - `src/auth/AuthProvider.tsx`, `src/store/plannerStore.ts` (commit refactor +
@@ -362,8 +390,9 @@ can't invalidate finished work.
 2. **Audit:** as Silvia, change a cargo-ready date → a
    `master_item_field_history` row appears with her email + timestamp; CBM edits
    logged too.
-3. **App via Cloudflare:** open the domain as each email — single login, correct
-   scope; admin full, internal commit-not-uncommit, factory own-supplier only.
+3. **App via Cloudflare:** open the domain as each email — Cloudflare network gate,
+   then Supabase magic-link, correct scope; admin full, internal commit-not-uncommit,
+   factory own-supplier only.
 4. **Python push:** run `push_pos.py` with a fresh PO batch → new lines appear,
    a factory-edited cargo-ready is preserved, `import_batches` row written.
 5. **Realtime + locks:** two browsers (Silvia, Jordan) — an allocation by one
