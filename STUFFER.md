@@ -270,21 +270,50 @@ of a blank.
 `planner_po_line_events`; a separate reference table would need syncing and would drift. HUB2's
 anti-redundancy rule applies to derived data too: *is this data another table already owns?*
 
+**Keep every observation, and record how it was supplied.** A total is a real measurement — it
+is just expressed against a quantity rather than per carton. Discarding those would throw away
+data on the exact items least likely to have a per-case figure. Two layers: the observations,
+then the aggregate over them.
+
 ```sql
+-- every CBM a supplier has ever given, with its provenance
+create view planner_cbm_observations as
+select
+  organization_id,
+  sku,
+  case when cbm_per_case is not null then 'per_case' else 'total' end as supplied_as,
+  cbm_per_case_eff as cbm_per_case,   -- comparable across both, whichever was typed
+  cbm_total_eff    as cbm_total,
+  quantity,                            -- the divisor, so a total can be re-derived later
+  document_number, line_id,
+  updated_at
+from planner_po_lines
+where cbm_per_case is not null or cbm_total is not null;
+
+-- the estimator: aggregate, still carrying the distinction
 create view planner_cbm_reference as
 select
   organization_id,
   sku,
-  count(*)                                      as observations,
-  round(avg(cbm_per_case), 6)                   as avg_cbm_per_case,
+  count(*)                                                  as observations,
+  count(*) filter (where supplied_as = 'per_case')          as measured_per_case,
+  count(*) filter (where supplied_as = 'total')             as derived_from_total,
   percentile_cont(0.5) within group (order by cbm_per_case) as median_cbm_per_case,
-  min(cbm_per_case)                             as min_cbm_per_case,
-  max(cbm_per_case)                             as max_cbm_per_case,
-  max(updated_at)                               as last_observed_at
-from planner_po_lines
-where cbm_per_case is not null          -- SUPPLIED only, never an estimate
+  min(cbm_per_case)                                         as min_cbm_per_case,
+  max(cbm_per_case)                                         as max_cbm_per_case,
+  max(updated_at)                                           as last_observed_at
+from planner_cbm_observations
 group by organization_id, sku;
 ```
+
+Carrying `supplied_as` through to the aggregate is what makes the estimate readable rather than
+merely available. *"6 observations, all per-case"* and *"6 observations, all back-derived from
+totals"* deserve different confidence, and an analyst can filter to one kind without the view
+having decided for them.
+
+`quantity` rides along in the observations view for the same reason: a total-derived per-case
+figure is only as good as the quantity it was divided by, so keeping the divisor lets you spot
+the case where a re-pushed quantity moved an old observation.
 
 Two tiers are useful, and the fallback order matters:
 
@@ -327,16 +356,14 @@ inference.
 - [ ] Decide whether an estimate may be *promoted* to supplied. Recommendation: **no**, and if
       it ever is, do it as an explicit user action with `source = 'estimate_accepted'` in the
       event log — never silently
-> **The two-input design already solves the contamination problem, for free.** A per-case
-> figure *derived* from a total is only as good as the quantity it was divided by — and
-> quantities get re-pushed. Feeding those back into the reference would let one bad quantity
-> corrupt an item's history.
+> **Provenance comes free from the two-input design — no extra flag needed.**
+> `cbm_per_case IS NOT NULL` means the supplier typed a per-case figure. A line where only a
+> total was given has `cbm_per_case IS NULL` with `cbm_per_case_eff` populated. That single
+> distinction is what `supplied_as` reads, and it is why the inputs are stored separately from
+> the resolved values rather than collapsed into one column on write.
 >
-> No flag is needed to prevent it. `cbm_per_case IS NOT NULL` means **the supplier typed a
-> per-case figure**; a line where only a total was given has `cbm_per_case IS NULL` and
-> `cbm_per_case_eff` populated. So the view's `where cbm_per_case is not null` admits measured
-> values and excludes derived ones **by construction**. Filtering on `cbm_per_case_eff` instead
-> would silently include them — the one-word difference is the whole safeguard.
+> Storing both kinds, labelled, beats filtering to one: the items least likely to have a
+> per-case figure are exactly the ones you most need an estimate for.
 
 ### `planner_po_line_events` — append-only history
 
@@ -545,9 +572,10 @@ Not "it runs" — these each have a failing case.
 11. Changing `quantity` on a line whose supplier gave only `cbm_total` moves
     `cbm_per_case_eff` and writes **no** history row — confirming the log records supplied
     values, not computed ones
-12. **`planner_cbm_reference` counts only measured values.** A line where the supplier gave a
-    total (so `cbm_per_case IS NULL`, `cbm_per_case_eff` populated) contributes **nothing** to
-    the reference — derived figures never feed the estimator
+12. **`planner_cbm_observations` labels provenance correctly.** A line where the supplier typed
+    a per-case figure reads `supplied_as = 'per_case'`; one where they gave only a total reads
+    `'total'`. Both appear; `planner_cbm_reference` counts them separately in
+    `measured_per_case` / `derived_from_total`
 13. The view is subject to RLS through its base table: a factory querying it sees only its own
     SKUs, internal sees every organization's
 
