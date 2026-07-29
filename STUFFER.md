@@ -276,19 +276,29 @@ data on the exact items least likely to have a per-case figure. Two layers: the 
 then the aggregate over them.
 
 ```sql
--- every CBM a supplier has ever given, with its provenance
+-- every CBM a supplier has ever given, with its provenance and WHEN
 create view planner_cbm_observations as
 select
-  organization_id,
-  sku,
-  case when cbm_per_case is not null then 'per_case' else 'total' end as supplied_as,
-  cbm_per_case_eff as cbm_per_case,   -- comparable across both, whichever was typed
-  cbm_total_eff    as cbm_total,
-  quantity,                            -- the divisor, so a total can be re-derived later
-  document_number, line_id,
-  updated_at
-from planner_po_lines
-where cbm_per_case is not null or cbm_total is not null;
+  l.organization_id,
+  l.sku,
+  case when l.cbm_per_case is not null then 'per_case' else 'total' end as supplied_as,
+  l.cbm_per_case_eff as cbm_per_case,  -- comparable across both, whichever was typed
+  l.cbm_total_eff    as cbm_total,
+  l.quantity,                           -- the divisor, so a total can be re-derived later
+  l.document_number, l.line_id,
+  e.created_at as observed_at,          -- when the CBM was supplied — NOT l.updated_at
+  e.changed_by as observed_by,
+  e.source     as observed_via          -- 'csv' | 'grid' | 'api'
+from planner_po_lines l
+left join lateral (
+  select created_at, changed_by, source
+    from planner_po_line_events
+   where po_line_id = l.id
+     and field in ('cbm_per_case', 'cbm_total')
+   order by created_at desc
+   limit 1
+) e on true
+where l.cbm_per_case is not null or l.cbm_total is not null;
 
 -- the estimator: aggregate, still carrying the distinction
 create view planner_cbm_reference as
@@ -301,10 +311,28 @@ select
   percentile_cont(0.5) within group (order by cbm_per_case) as median_cbm_per_case,
   min(cbm_per_case)                                         as min_cbm_per_case,
   max(cbm_per_case)                                         as max_cbm_per_case,
-  max(updated_at)                                           as last_observed_at
+  max(observed_at)                                          as last_observed_at,
+  min(observed_at)                                          as first_observed_at
 from planner_cbm_observations
 group by organization_id, sku;
 ```
+
+> **`observed_at` comes from the event log, not from `planner_po_lines.updated_at`.** That
+> distinction matters more than it looks. The row's `updated_at` moves whenever *any* column
+> changes — and internal re-pushes quantities weekly, so every line's timestamp resets
+> constantly. Using it would make a measurement taken six months ago look like it was taken
+> yesterday, and an estimator that cannot tell stale data from fresh is worse than no
+> estimator.
+>
+> This is the second thing the event log pays for, after the cargo-ready history: **it is the
+> only place that knows when a specific field was last touched.** `observed_by` and
+> `observed_via` come along free — *"who measured this, and did they type it or upload it?"*
+
+The log holds **every** value ever supplied, not just the current one, so deeper questions are
+already answerable without new tables: how often a factory revises a measurement, whether their
+figures drift, whether one person's uploads are consistently off. The views above deliberately
+read the *latest* observation per line, since a superseded value is usually a correction — but
+the full series is there when the question needs it.
 
 Carrying `supplied_as` through to the aggregate is what makes the estimate readable rather than
 merely available. *"6 observations, all per-case"* and *"6 observations, all back-derived from
@@ -578,6 +606,10 @@ Not "it runs" — these each have a failing case.
     `measured_per_case` / `derived_from_total`
 13. The view is subject to RLS through its base table: a factory querying it sees only its own
     SKUs, internal sees every organization's
+14. **`observed_at` does not move when unrelated columns do.** Supply a CBM, note the
+    timestamp, then re-push a quantity for that line — `observed_at` must be **unchanged**,
+    while `planner_po_lines.updated_at` moves. This is the check that catches the tempting
+    shortcut of reading `updated_at`
 
 ---
 
