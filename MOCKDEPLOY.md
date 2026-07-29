@@ -7,7 +7,7 @@
 >
 > | This file says | Now |
 > |---|---|
-> | a `organizations` table | **`organizations`** with `type='customer'` — there is no `organizations` table |
+> | a `organizations` table | **`organizations`** with `type='supplier'` — there is no `organizations` table |
 > | `supplier_id` | **`organization_id`** |
 > | `profiles` keyed by **email**, no FK to `auth.users` | the **shared** `profiles`, keyed `id → auth.users(id)`. Create the auth user first, then the profile |
 > | `current_profile()` | **`my_org()` / `my_org_type()` / `my_org_role()`** — already deployed |
@@ -94,8 +94,8 @@ Base tables per CONTCONFIG ("Schema" + "Identity & RLS"), with these concrete
 choices/additions:
 
 - ~~`suppliers(...)`~~ → **`organizations(id uuid pk, name unique, code text unique check
-  2-letter, type check(internal|forwarder|customer), active, created_at)`** — shared with
-  RatesApp and Schedules. Factories are rows with `type='customer'`.
+  2-letter, type check(internal|forwarder|supplier), active, created_at)`** — shared with
+  RatesApp and Schedules. Factories are rows with `type='supplier'`.
 - `profiles(id uuid pk default gen_random_uuid(), email citext unique not null,
   display_name, role check(admin|internal|factory), organization_id fk null,
   org_name text, created_at, constraint factory_has_supplier)`. Keyed by **email**

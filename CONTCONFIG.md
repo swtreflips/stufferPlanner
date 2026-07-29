@@ -2,7 +2,7 @@
 
 > **The DDL in this file predates the shared Supabase project** — see
 > [STUFFER.md](STUFFER.md), which is now canonical for anything the database does.
-> `suppliers` → `organizations` (`type='customer'`), `supplier_id` → `organization_id`,
+> `suppliers` → `organizations` (`type='supplier'`), `supplier_id` → `organization_id`,
 > `master_items` → `planner_po_lines`, `containers` → `planner_containers`,
 > `container_allocations` → `planner_allocations`.
 > **The TypeScript keeps its own vocabulary** — `Supplier`, `supplierId`, `MasterItem` are

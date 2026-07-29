@@ -13,7 +13,7 @@ Do not implement any of this without an explicit decision to do so. See
 
 > **Database names in this file predate the shared Supabase project.** The design holds; the
 > identifiers moved. See [STUFFER.md](STUFFER.md) → *The canonical mapping* — in short:
-> `suppliers` → `organizations` (`type='customer'`), `supplier_id` → `organization_id`,
+> `suppliers` → `organizations` (`type='supplier'`), `supplier_id` → `organization_id`,
 > `master_items` → `planner_po_lines`, `containers` → `planner_containers`,
 > `current_profile()` → `my_org()` / `my_org_type()` / `my_org_role()`.
 > **Domain words like "supplier" and "factory" remain correct**; only SQL identifiers changed.

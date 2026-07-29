@@ -7,7 +7,7 @@
 >
 > | This file says | Now |
 > |---|---|
-> | a `organizations` table | **`organizations`** with `type='customer'` — there is no `organizations` table |
+> | a `organizations` table | **`organizations`** with `type='supplier'` — there is no `organizations` table |
 > | `supplier_id` | **`organization_id`** |
 > | `profiles` keyed by **email**, no FK to `auth.users` | the **shared** `profiles`, keyed `id → auth.users(id)`. Create the auth user first, then the profile |
 > | `current_profile()` | **`my_org()` / `my_org_type()` / `my_org_role()`** — already deployed |
@@ -396,7 +396,7 @@ You'll be adding more factories. Recommended flow:
 
 ```sql
 -- One-time per supplier, run by admin (via Supabase SQL editor).
-insert into organizations (name, code, type) values ('Acme Plastics Ltd.', 'AP', 'customer');
+insert into organizations (name, code, type) values ('Acme Plastics Ltd.', 'AP', 'supplier');
 ```
 
 Code is 2 letters, uppercase, unique. If your first pick collides, try a

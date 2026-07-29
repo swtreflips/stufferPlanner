@@ -59,7 +59,7 @@ HUB2 names this as the single ordering constraint in the entire estate plan:
 - [ ] `organizations.code` — the 2-letter supplier code (`DT`, `TP`). **`forwarders` has no
       `code` column**; it is used for container numbering and is genuinely useful, so it lands
       here rather than in a planner-private table
-- [ ] `organizations.type` must permit **`customer`** — factories
+- [ ] `organizations.type` must permit **`supplier`** — factories
 - [ ] `profiles.role`'s check currently allows only `internal | forwarder`. Either widen it or
       let `organizations.type` carry the distinction and stop writing `role`
 
@@ -69,7 +69,7 @@ HUB2 names this as the single ordering constraint in the entire estate plan:
 
 ```sql
 my_org()        -- uuid: whose data this is. NULL for internal users.
-my_org_type()   -- 'internal' | 'forwarder' (later 'customer'). NULL if no profile row.
+my_org_type()   -- 'internal' | 'forwarder' (later 'supplier'). NULL if no profile row.
 my_org_role()   -- 'admin' | 'member' within your own organization.
 ```
 
@@ -84,7 +84,7 @@ Seven conflicts. All load-bearing, none cosmetic.
 
 | Those documents say | This one says | Why |
 |---|---|---|
-| Create a **`suppliers`** table | **No.** Factories are `organizations` with `type='customer'` | HUB2 non-negotiable. Two apps invented the same concept twice |
+| Create a **`suppliers`** table | **No.** Factories are `organizations` with `type='supplier'` | HUB2 non-negotiable. Two apps invented the same concept twice |
 | **`profiles` keyed by email**, no FK to `auth.users` | Use the shared `profiles`, keyed `id → auth.users(id)` | There is one `profiles`. Its "seed before first login" motivation is solved by creating the auth user first, then the profile — which is what onboarding already does |
 | Helper **`current_profile()`** | `my_org()` / `my_org_type()` / `my_org_role()` | Two RLS idioms in one database means every identity change is edited twice, in two styles |
 | `role check(admin\|internal\|factory)` | `organizations.type` + `profiles.org_role` | `admin` vs `internal` is *standing within an org*, orthogonal to *what kind of org*. Conflating them is why the matrix and RLS.md disagreed |
@@ -99,7 +99,7 @@ reasoning, each now carries a banner pointing here. This table is the single tra
 
 | Domain word — **still correct in prose** | Database identifier |
 |---|---|
-| supplier, factory | a row in **`organizations`** with `type = 'customer'` |
+| supplier, factory | a row in **`organizations`** with `type = 'supplier'` |
 | the suppliers list | **`organizations`** — there is no `suppliers` table |
 | supplier id / `supplierId` (TS) | **`organization_id`** |
 | supplier code (`DT`, `TP`) | **`organizations.code`** |
@@ -107,7 +107,7 @@ reasoning, each now carries a banner pointing here. This table is the single tra
 | containers | **`planner_containers`** |
 | allocations | **`planner_allocations`** |
 | `current_profile()` | **`my_org()` / `my_org_type()` / `my_org_role()`** |
-| role `admin` / `internal` / `factory` | `organizations.type` (`internal`\|`customer`) **+** `profiles.org_role` (`admin`\|`member`) |
+| role `admin` / `internal` / `factory` | `organizations.type` (`internal`\|`supplier`) **+** `profiles.org_role` (`admin`\|`member`) |
 | Cloudflare Access for factories | **dropped** — RLS is the boundary |
 
 **The frontend keeps its own vocabulary.** `Supplier`, `supplierId`, `MasterItem` stay in
@@ -139,7 +139,41 @@ announces itself in the Supabase dashboard.
 
 ---
 
-## ⚠️ Open question — the two files do not share a join key
+## ✅ Resolved — the join key is `(document_number, sku)`
+
+**Verified against the real 314-row `plannerInput.csv`, not assumed:**
+
+| Candidate | Distinct / 314 | Verdict |
+|---|---|---|
+| `Internal ID` | 216 — **43 duplicated** | ❌ identifies the **PO**, not the line. Duplicates exactly as often as Document Number |
+| `Document Number` | 216 — 43 duplicated | ❌ one per PO |
+| **`(Document Number, Item)`** | **314 / 314, zero duplicates** | ✅ **the key** |
+
+`Internal ID` is NetSuite's id for the *purchase order*, repeated across every line on it. It
+is worth carrying as `internal_id` for traceability back to NetSuite, but it can never be the
+line key.
+
+**The fix on the file side:** the supplier template gets the same two column headers —
+`Document Number` and `Item` — so both files key identically. That is a template change, not a
+schema one.
+
+- [ ] Standardise `plannerEnrichdata.xlsx`: rename its item column to **`Item`**, keep
+      **`Document Number`**, and add **`CBM per Case`** beside **`Total CBM`** (today it has a
+      single ambiguous `CBM`, and no per-case column at all — so the input the design prefers
+      cannot currently be supplied)
+
+> **The next question this exposes: how does a supplier NAME resolve to an organization?**
+> `plannerInput.csv` carries `Main Line Name` — 17 distinct values including *"Tejaswi Plastic
+> Pvt Ltd."* and *"Thal Limited – Pakistan Papersack Division"* (note the en-dash). Matching
+> those to `organizations.name` by exact string is fragile: one renamed vendor in NetSuite and
+> a week's PO lines silently import against nothing.
+>
+> - [ ] Either keep `organizations.name` byte-identical to NetSuite's vendor name and make the
+>       import **fail loudly** on an unmatched name, or add an alias table. Do not let an
+>       unmatched supplier become a null `organization_id` — that row would be invisible to
+>       every factory *and* mis-scoped for internal
+
+### The original problem, kept for the reasoning
 
 **This must be answered before any SQL is written**, or the first real supplier upload silently
 matches nothing and reports success.
@@ -677,7 +711,7 @@ sibling and [src/data/repos/index.ts](src/data/repos/index.ts) flips on `VITE_DA
 Same pattern as RatesApp, and MOCKDEPLOY.md's seed table — with organizations instead of
 `suppliers`, and **no Cloudflare Access for factories**.
 
-- [ ] **Two customer organizations minimum** in `supabase/seed.sql`. An isolation test with one
+- [ ] **Twointernal \| forwarder \| supplier organizations minimum** in `supabase/seed.sql`. An isolation test with one
       tenant is vacuous — there is nothing to leak
 - [ ] Mock accounts are partner-scoped logins you hold. Handover is data-only and all history
       survives, because the UUID never changes
@@ -729,7 +763,7 @@ Not "it runs" — these each have a failing case.
 expand: organizations + organization_services + profiles.organization_id
    └─ planner tables + triggers
         └─ RLS + RPCs
-             └─ seed with two customer organizations
+             └─ seed with twointernal \| forwarder \| supplier organizations
                   └─ isolation tests green
                        └─ Supabase*Repo, one at a time
                             └─ mock accounts
@@ -751,7 +785,7 @@ testable on its own, and **nothing above the line it depends on.**
 holds `forwarders` and nothing else.
 
 - [ ] `organizations (id, name, type, code, active)` — `type` must permit
-      `internal | forwarder | customer`
+      `internal | forwarder |internal \| forwarder \| supplier`
 - [ ] `organization_services (organization_id, service, active)`
 - [ ] **Create rows carrying the existing `forwarders.id` values unchanged**, so every
       `forwarder_id` already stored is already a valid `organization_id`. A copy, not a remap
@@ -773,7 +807,7 @@ until HUB2's contract phase, long after this.
 > Your own account cannot be both internal and a factory.** To see what a supplier sees you
 > need a *separate login*. Plan for four accounts, not three.
 
-- [ ] Three `organizations` with `type='customer'` and 2-letter codes — real names if these
+- [ ] Three `organizations` with `type='supplier'` and 2-letter codes — real names if these
       become real onboardings later, since the UUID never changes and handover is data-only
 - [ ] Create the auth users: Dashboard → Authentication → Users → **Add user**, with
       auto-confirm ticked. An unconfirmed user cannot complete a password sign-in
@@ -796,7 +830,7 @@ until HUB2's contract phase, long after this.
 - [ ] `planner_containers`, `planner_allocations`, `planner_sequences`, `planner_import_batches`
 - [ ] The views: `planner_cbm_observations`, `planner_cbm_reference`, `planner_crd_movements`
 - [ ] `COMMENT ON` every table — `TIER | OWNER | READ BY | purpose`
-- [ ] **Extend `RatesApp/supabase/seed.sql`** with the three customer organizations, their
+- [ ] **Extend `RatesApp/supabase/seed.sql`** with the threeinternal \| forwarder \| supplier organizations, their
       profiles, and enough PO lines across two of them that isolation can actually fail
 - [ ] `supabase db reset` rebuilds clean
 
