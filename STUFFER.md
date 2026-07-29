@@ -259,6 +259,85 @@ cannot write back.
       beyond a tolerance. Without one, `cbm_per_case_eff × quantity` need not equal
       `cbm_total_eff` — the same latent inconsistency drayage accepts for fuel
 
+### Historic CBM — estimating what was never measured
+
+Suppliers often return a cargo ready date and nothing else, because nobody measured the
+cartons. But an item a factory has shipped before **has been measured before**. That history is
+worth keeping and worth querying — not to make the app work, but to plan with a number instead
+of a blank.
+
+**This is a view, not a table.** The observations already exist in `planner_po_lines` and in
+`planner_po_line_events`; a separate reference table would need syncing and would drift. HUB2's
+anti-redundancy rule applies to derived data too: *is this data another table already owns?*
+
+```sql
+create view planner_cbm_reference as
+select
+  organization_id,
+  sku,
+  count(*)                                      as observations,
+  round(avg(cbm_per_case), 6)                   as avg_cbm_per_case,
+  percentile_cont(0.5) within group (order by cbm_per_case) as median_cbm_per_case,
+  min(cbm_per_case)                             as min_cbm_per_case,
+  max(cbm_per_case)                             as max_cbm_per_case,
+  max(updated_at)                               as last_observed_at
+from planner_po_lines
+where cbm_per_case is not null          -- SUPPLIED only, never an estimate
+group by organization_id, sku;
+```
+
+Two tiers are useful, and the fallback order matters:
+
+1. **`(organization_id, sku)`** — this factory has made this item before. The best estimate:
+   the same people packing the same product
+2. **`(sku)` across all organizations** — someone has made it. Weaker, because packing differs
+   by factory, but far better than nothing
+
+> **Median, not average.** One mis-keyed decimal — `0.42` instead of `0.042` — drags an average
+> by an order of magnitude and quietly poisons every estimate for that SKU. The median shrugs it
+> off. `min`/`max` are carried precisely so a wide spread is visible rather than hidden inside
+> a single number.
+
+#### The rule: an estimate must never look like a measurement
+
+**Never write an estimated value into `cbm_per_case`.** That column means *a supplier told us
+this*. Estimates go beside it, never into it:
+
+```
+cbm_per_case         supplied by the factory        ← the only thing they may write
+cbm_per_case_eff     supplied, or derived from total (generated)
+cbm_cbm_estimated    from planner_cbm_reference     ← a JOIN, never a column
+```
+
+Reasons this boundary is load-bearing:
+
+- **Provenance survives.** *"We are planning this container on a guess"* is a materially
+  different sentence from *"the factory measured it"*, and only one of them should let someone
+  commit a container without a second look
+- **The history log stays honest.** Writing an estimate into `cbm_per_case` fires the
+  `AFTER UPDATE` trigger and records a supplier edit that never happened
+- **Estimates improve.** A view recomputes as new measurements arrive; a value written into the
+  row is frozen at the moment someone guessed
+
+The grid should render an estimated figure visibly differently — greyed, italic, with the
+observation count on hover (*"estimated from 4 past shipments, 0.041–0.044"*). A planner
+should be able to see at a glance which containers are packed on measurements and which on
+inference.
+
+- [ ] Decide whether an estimate may be *promoted* to supplied. Recommendation: **no**, and if
+      it ever is, do it as an explicit user action with `source = 'estimate_accepted'` in the
+      event log — never silently
+> **The two-input design already solves the contamination problem, for free.** A per-case
+> figure *derived* from a total is only as good as the quantity it was divided by — and
+> quantities get re-pushed. Feeding those back into the reference would let one bad quantity
+> corrupt an item's history.
+>
+> No flag is needed to prevent it. `cbm_per_case IS NOT NULL` means **the supplier typed a
+> per-case figure**; a line where only a total was given has `cbm_per_case IS NULL` and
+> `cbm_per_case_eff` populated. So the view's `where cbm_per_case is not null` admits measured
+> values and excludes derived ones **by construction**. Filtering on `cbm_per_case_eff` instead
+> would silently include them — the one-word difference is the whole safeguard.
+
 ### `planner_po_line_events` — append-only history
 
 ```
@@ -466,6 +545,11 @@ Not "it runs" — these each have a failing case.
 11. Changing `quantity` on a line whose supplier gave only `cbm_total` moves
     `cbm_per_case_eff` and writes **no** history row — confirming the log records supplied
     values, not computed ones
+12. **`planner_cbm_reference` counts only measured values.** A line where the supplier gave a
+    total (so `cbm_per_case IS NULL`, `cbm_per_case_eff` populated) contributes **nothing** to
+    the reference — derived figures never feed the estimator
+13. The view is subject to RLS through its base table: a factory querying it sees only its own
+    SKUs, internal sees every organization's
 
 ---
 
