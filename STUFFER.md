@@ -1,0 +1,406 @@
+# STUFFER — the planner's backend
+
+The tables, RLS, and ingest flow that give Stuffer Planner a backend, in the **shared rates
+Supabase project** where RatesApp and Schedules already live.
+
+Companion to [CLAUDE.md](CLAUDE.md), [CONTCONFIG.md](CONTCONFIG.md), [RLS.md](RLS.md) and
+[MOCKDEPLOY.md](MOCKDEPLOY.md). **Where this file disagrees with those two, this one wins** —
+they were written before the shared database existed. Every disagreement is listed and
+explained rather than silently applied.
+
+Upstream context: `RatesApp/HUB2.md` (the estate plan) and `RatesApp/MIGRATION.md` (how
+Schedules was folded in — the same exercise, one app earlier).
+
+---
+
+## Why now
+
+The planner has **no backend at all**: `VITE_DATA_SOURCE=local`, everything behind
+`LocalContainerRepo` / `LocalMasterItemRepo` / `LocalProfileRepo`, with `plannerData.csv`
+hardcoded as sample data.
+
+**That is the opportunity, and it is closing.** RatesApp and Schedules were retrofitted onto
+the shared identity model after the fact. The planner can be built against it from the first
+line — which costs an edit to a design doc instead of a migration of a second live schema,
+with a table-name collision in the middle.
+
+### The business it has to support
+
+| | |
+|---|---|
+| **Shared board** | Internal and factories look at the same planning surface |
+| **Scoping** | A factory sees only its own POs and containers. Internal sees everything |
+| **Internal pushes** | Open PO lines and quantities — `plannerInput.csv` weekly, a NetSuite API later |
+| **Factories return** | Cargo ready dates and CBM — `plannerEnrichdata.xlsx`, or typed into the grid |
+| **The app shows** | The latest value per PO line |
+| **The point** | **Cargo ready dates move. How far, how often, and who moved them must be recorded.** Planning is the reason this app exists, and dates slipping is the thing planning is against |
+
+---
+
+## Step 0 — `organizations` must exist first
+
+**Checked against the live database: it does not.** `public` today holds `forwarders`; there is
+no `organizations` and no `organization_services`.
+
+HUB2 names this as the single ordering constraint in the entire estate plan:
+
+> *"When the planner's schema is written, `profiles` and `organizations` must already exist in
+> their shared form. Otherwise the planner creates `suppliers` and a second `profiles`, and you
+> migrate twice — re-testing the RLS you had just finished verifying."*
+
+**The planner is what forces expand to land.** Nothing else needed it; RatesApp runs happily on
+`forwarder_id`.
+
+- [ ] **Expand** — `organizations`, `organization_services`, `profiles.organization_id`
+      nullable beside `forwarder_id`, backfilled
+- [ ] **Create `organizations` rows carrying the existing `forwarders.id` values unchanged.**
+      Every `forwarder_id` already stored is then already a valid `organization_id` — a copy,
+      not a remap, and each step verifies with a query returning zero
+- [ ] `organizations.code` — the 2-letter supplier code (`DT`, `TP`). **`forwarders` has no
+      `code` column**; it is used for container numbering and is genuinely useful, so it lands
+      here rather than in a planner-private table
+- [ ] `organizations.type` must permit **`customer`** — factories
+- [ ] `profiles.role`'s check currently allows only `internal | forwarder`. Either widen it or
+      let `organizations.type` carry the distinction and stop writing `role`
+
+`profiles.org_role` (`admin | member`) **already exists** — added with the helper facade.
+
+### What already exists and must be used
+
+```sql
+my_org()        -- uuid: whose data this is. NULL for internal users.
+my_org_type()   -- 'internal' | 'forwarder' (later 'customer'). NULL if no profile row.
+my_org_role()   -- 'admin' | 'member' within your own organization.
+```
+
+Deployed, `security definer`, `search_path` pinned. When expand lands, **only their bodies
+change** and every policy written against them keeps working.
+
+---
+
+## What this supersedes in MOCKDEPLOY.md and RLS.md
+
+Seven conflicts. All load-bearing, none cosmetic.
+
+| Those documents say | This one says | Why |
+|---|---|---|
+| Create a **`suppliers`** table | **No.** Factories are `organizations` with `type='customer'` | HUB2 non-negotiable. Two apps invented the same concept twice |
+| **`profiles` keyed by email**, no FK to `auth.users` | Use the shared `profiles`, keyed `id → auth.users(id)` | There is one `profiles`. Its "seed before first login" motivation is solved by creating the auth user first, then the profile — which is what onboarding already does |
+| Helper **`current_profile()`** | `my_org()` / `my_org_type()` / `my_org_role()` | Two RLS idioms in one database means every identity change is edited twice, in two styles |
+| `role check(admin\|internal\|factory)` | `organizations.type` + `profiles.org_role` | `admin` vs `internal` is *standing within an org*, orthogonal to *what kind of org*. Conflating them is why the matrix and RLS.md disagreed |
+| **`container_sequences(supplier_code)`** | `planner_sequences`, keyed on `organizations.code` | One place owns the code |
+| Table names `master_items`, `containers` | **`planner_` prefix** — see below | |
+| **Cloudflare Zero Trust for factories** | **Drop it.** Factories get no Access account | Administering external identities in two systems scales badly, and RLS is already the real boundary |
+
+### On naming — a deliberate deviation from HUB2
+
+HUB2 says `containers`, `container_allocations`, `master_items` are *"distinct, keep"*. That
+predates the `ports → world_ports` rename, which established the working rule: a table name
+must be globally unique **and self-evidently app-scoped**.
+
+In a database that already holds ocean rates, drayage, and sailing schedules, a bare
+`containers` is exactly the ambiguity that rename removed. Prefix them, matching
+`sched_vessels` and `drayage_rates`:
+
+```
+planner_po_lines         (was master_items)
+planner_po_line_events   (new — the history)
+planner_containers       (was containers)
+planner_allocations      (was container_allocations)
+planner_sequences        (was container_sequences)
+planner_import_batches   (was import_batches)
+```
+
+Every table gets a `COMMENT ON` in the `TIER | OWNER | READ BY | purpose` format, so it
+announces itself in the Supabase dashboard.
+
+---
+
+## ⚠️ Open question — the two files do not share a join key
+
+**This must be answered before any SQL is written**, or the first real supplier upload silently
+matches nothing and reports success.
+
+```
+plannerInput.csv       Internal ID, Document Number, Item, Main Line Name, Quantity,
+   (internal)          Quantity Available, Due Date/Receive By, Origin, POL, Destination
+                       └─ keyed on (Document Number, Item).  NO Line ID.
+
+plannerEnrichdata.xlsx Name, Date Issued, Document Number, Ship To, Requested Ship By,
+   (factory)           Status, Line ID, Quantity Remaining, CBM, Cargo Ready, ETD, ETA,
+                       Shipping Agent
+                       └─ keyed on (Document Number, Line ID).  NO SKU column.
+```
+
+`plannerData.csv`, which the frontend renders today, carries **both** — `Document Number`,
+`Line ID`, *and* `Name_1` (the SKU). So the app's own sample data resolves it; the two
+production files do not.
+
+- [ ] **Decide the canonical line key.** `(document_number, line_id)` is the natural choice —
+      it is what the enrich file and the frontend already use
+- [ ] **Then state how `plannerInput.csv` produces a `line_id`**, since it has none. Either
+      NetSuite exposes it and the export needs the column added, or it is derived from row
+      order within a PO — which breaks the moment a line is removed upstream
+- [ ] Until resolved, `sku` is the only shared field, and `(document_number, sku)` is not
+      unique when a PO orders the same item on two lines
+
+---
+
+## Schema
+
+### `planner_po_lines` — one row per PO line
+
+Internal owns most of it. Factories own exactly two fields.
+
+```
+id                     uuid pk
+organization_id        uuid not null → organizations     -- WHOSE DATA THIS IS. the scoping column.
+document_number        text not null
+line_id                integer not null
+sku                    text
+                       unique (document_number, line_id)  -- the upsert target for re-pushes
+
+-- internal, from plannerInput.csv
+internal_id            text
+quantity               numeric
+quantity_available     numeric
+due_date               date
+origin                 text
+pol                    text
+destination            text
+
+-- factory-owned
+cargo_ready            date
+cbm_per_case           numeric
+cbm_total              numeric
+
+-- planning
+original_cargo_ready   date        -- stamped on FIRST set, never updated
+committed_quantity     numeric default 0
+                       check (committed_quantity <= quantity)
+
+raw                    jsonb       -- every unmapped column, so a CSV shape change loses nothing
+created_at, updated_at timestamptz
+```
+
+**`original_cargo_ready` is not redundant with the event log.** Total slippage is the question
+asked on every screen, and a subtraction beats walking a log for it. The log answers *how it
+got there*; this answers *how bad is it*, cheaply enough to sort a grid by.
+
+**`organization_id` means whose data this is, not who typed it.** An internal user editing a
+factory's line on their behalf leaves `organization_id` pointing at the factory.
+
+### `planner_po_line_events` — append-only history
+
+```
+id             bigint identity pk
+po_line_id     uuid not null → planner_po_lines on delete cascade
+organization_id uuid not null                    -- denormalised so RLS needs no join
+field          text check (field in ('cargo_ready','cbm_per_case','cbm_total'))
+old_value      text
+new_value      text
+changed_by     uuid → profiles                   -- NULL for a service-role push
+source         text check (source in ('csv','grid','api'))
+created_at     timestamptz default now()
+```
+
+Written by an **`AFTER UPDATE` trigger on `planner_po_lines`**, one row per changed field.
+
+Putting it in a trigger rather than in application code is the whole design:
+
+- **A CSV upload and a single-cell grid edit produce identical history**, with no cooperation
+  from the frontend and no way to forget
+- **An update that changes nothing writes nothing.** Re-uploading last week's file is a no-op
+  in both tables — which matters, because that will happen
+- It cannot be bypassed by a future second write path
+
+`source` is what makes *"who keeps moving this date?"* answerable — a bulk push slipping a date
+is a supply problem; a person moving it by hand three times is a different conversation.
+
+Queries it enables:
+
+```sql
+-- how far has this line slipped, and in how many moves?
+select count(*) as moves,
+       max(new_value::date) - min(old_value::date) as net_days
+from planner_po_line_events
+where po_line_id = $1 and field = 'cargo_ready';
+```
+
+### `planner_containers`, `planner_allocations`, `planner_sequences`
+
+Mirror the TypeScript so the repo swap is mechanical — [src/types/container.ts](src/types/container.ts)
+and [src/types/allocation.ts](src/types/allocation.ts).
+
+- `planner_containers`: `code` unique, `organization_id` not null, `capacity_cbm`,
+  `display_order`, `ofq_reference`, `committed_at/by`, plus the whole post-commit lifecycle
+  shipped today — `logistics_status`, `booking jsonb`, `schedule jsonb`,
+  `booked_at/by`, `scheduled_at/by`, `shipped_at/by`
+- `planner_allocations`: `container_id`, `po_line_id`, `quantity`, `display_order`
+- `planner_sequences`: keyed on `organizations.code`, `next_number int not null default 1`
+- `planner_import_batches`: `pushed_at`, `source`, `row_count` — ops tracking for the weekly push
+
+> `planner_containers.ofq_reference` is the forwarder's number on a committed container.
+> RatesApp's `OFQID` is a column in its rates-input CSV. **Same word, different things.** No
+> join, no shared handling.
+
+---
+
+## Security
+
+### The invariant
+
+> Every row in `planner_po_lines`, `planner_containers` and `planner_allocations` carries one
+> `organization_id`. A factory only ever sees or writes rows where
+> `organization_id = my_org()`. Internal sees everything. **This is enforced by RLS, not by the
+> UI** — the UI is for usability.
+
+### Policies
+
+Every policy uses the shared helpers. **Never** an inlined `exists (select 1 from profiles me …)`.
+
+```sql
+-- read: internal sees all, factory sees its own
+create policy planner_po_lines_read on planner_po_lines
+  for select to authenticated
+  using (my_org_type() = 'internal' or organization_id = my_org());
+```
+
+Two rules that are easy to get wrong:
+
+- **"Internal sees everything" is always `my_org_type() = 'internal'`, never a `my_org()`
+  comparison.** `my_org()` is NULL for internal users, so a comparison denies them
+- **Both layers are required.** `grant select … to authenticated` lets the role touch the table
+  at all; the policy narrows it. **RLS narrows a grant — it cannot create one.** Miss the grant
+  and internal users see an empty table, which looks like missing data rather than a
+  permissions bug
+
+`anon` gets **nothing**. The app signs in, so its callers are `authenticated`.
+
+### Column-level writes need a trigger — RLS cannot do it
+
+RLS grants access to *rows*, not *columns*. Without this, a factory could rewrite quantities on
+its own lines.
+
+```sql
+-- BEFORE UPDATE on planner_po_lines
+-- A factory may change ONLY cargo_ready, cbm_per_case, cbm_total.
+-- Everything else must be identical to the old row, or the update is rejected.
+```
+
+For the MVP **internal may write those same three fields too** — internal fills them in on a
+factory's behalf while the process beds in. That is a deliberate relaxation of CLAUDE.md's
+permissions matrix, which currently says internal cannot edit Cargo Ready or CBM.
+
+### Commit / uncommit stay RPCs
+
+`SECURITY DEFINER`, `search_path` pinned, identity stamped server-side:
+
+- `commit_container` — requires `my_org_type() = 'internal'`
+- `uncommit_container` — additionally requires `my_org_role() = 'admin'`
+- `next_container_code(org_code)` — atomic upsert+increment on `planner_sequences`
+
+A `SECURITY DEFINER` function without `set search_path` is a privilege-escalation shape. Pin it
+on all three.
+
+### `planner_po_line_events`
+
+Readable by internal and the owning organization. **Insert only via the trigger** — no direct
+insert grant to anyone. History nobody can write by hand is history you can trust.
+
+---
+
+## Ingest
+
+Both roles write **in-app**, through `supabase-js`. No Edge Function, no service key in the
+browser, and the existing [MasterCsvUploadDialog](src/components/grid/MasterCsvUploadDialog.tsx)
+is the seam.
+
+```
+internal ──plannerInput.csv──▶ upsert planner_po_lines on (document_number, line_id)
+factory  ──enrich file────────▶ update cargo_ready, cbm_per_case, cbm_total
+both     ──MUI grid edit──────▶ same columns, same trigger, source='grid'
+```
+
+RLS decides what each side may touch, so the *same code path* is safe for both. The trigger
+records both identically.
+
+Later, the NetSuite API replaces the internal CSV. That path runs server-side with the service
+key, which bypasses RLS — so it must set `organization_id` correctly itself. It is the one
+writer with no policy protecting it.
+
+---
+
+## Front end
+
+The repository abstraction is already the right seam. Each `Local*Repo` gains a `Supabase*Repo`
+sibling and [src/data/repos/index.ts](src/data/repos/index.ts) flips on `VITE_DATA_SOURCE` —
+**migrate one repo at a time; the app stays shippable at every step.**
+
+- [ ] `AuthProvider` mirrors RatesApp's: `profiles` as the only source of identity,
+      `undefined` = loading, `null` = no access, fail closed, never `user_metadata`. Two apps
+      differing at the auth boundary is how one of them ends up wrong
+- [ ] Point at the **rates** project. One person, one login, all three apps
+- [ ] Presence and locking work unchanged — but **a presence channel is a side channel.** If
+      factories cannot see each other's containers, make sure they cannot see each other's
+      avatars either
+- [ ] Confirm Realtime connection limits on the current tier before onboarding several
+      factories at once
+
+---
+
+## Mock deployment
+
+Same pattern as RatesApp, and MOCKDEPLOY.md's seed table — with organizations instead of
+`suppliers`, and **no Cloudflare Access for factories**.
+
+- [ ] **Two customer organizations minimum** in `supabase/seed.sql`. An isolation test with one
+      tenant is vacuous — there is nothing to leak
+- [ ] Mock accounts are partner-scoped logins you hold. Handover is data-only and all history
+      survives, because the UUID never changes
+- [ ] Deploys standalone to Vercel exactly as it does today. **The hub is DNS and a card
+      later — the app never moves into a container**
+- [ ] Its origin goes in the geo brain's `ALLOWED_ORIGINS` only if it ever geocodes. It does
+      not today
+
+---
+
+## Verification
+
+Not "it runs" — these each have a failing case.
+
+1. `supabase db reset` rebuilds the whole database including the planner tables
+2. **Factory A sees only A's PO lines. Factory B sees zero of A's. Internal sees both.**
+   Seeded from two organizations, or the test cannot fail
+3. A factory `update` touching `quantity` is **rejected** by the column trigger
+4. Changing a cargo ready date writes **exactly one** `planner_po_line_events` row
+5. **Re-uploading the same CSV is a no-op** — no table change, no log rows
+6. `anon`, using the key pulled from the built bundle, reads **zero** from every planner table
+7. Slippage per line matches `cargo_ready - original_cargo_ready`
+8. `commit_container` called by a factory is rejected; `uncommit_container` called by a
+   non-admin internal user is rejected
+
+---
+
+## Ordering
+
+```
+expand: organizations + organization_services + profiles.organization_id
+   └─ planner tables + triggers
+        └─ RLS + RPCs
+             └─ seed with two customer organizations
+                  └─ isolation tests green
+                       └─ Supabase*Repo, one at a time
+                            └─ mock accounts
+```
+
+**Nothing above the line it depends on.** The planner tables cannot reference `organizations`
+before it exists, and the RLS cannot be tested before two organizations are seeded.
+
+---
+
+## Keep this file honest
+
+Every state claim here should carry a date and a method, or a command that proves it. The
+`organizations` check above was run against the live database on **2026-07-28**; `MOCKDEPLOY.md`
+and `RLS.md` drifted precisely because they were written as instructions and never re-checked.
