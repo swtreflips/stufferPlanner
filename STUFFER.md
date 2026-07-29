@@ -514,6 +514,28 @@ and [src/types/allocation.ts](src/types/allocation.ts).
 - `planner_sequences`: keyed on `organizations.code`, `next_number int not null default 1`
 - `planner_import_batches`: `pushed_at`, `source`, `row_count` — ops tracking for the weekly push
 
+#### Take the `view_id` hedge now
+
+[VARIATIONS.md](VARIATIONS.md) designs parallel draft views — "what if we packed it this other
+way" — and explicitly defers building them. But it names a hedge worth taking *while the schema
+is still being written*, which is exactly now:
+
+```sql
+-- planner_containers
+view_id uuid null    -- reserved for VARIATIONS.md. NULL = the implicit baseline.
+```
+
+No UI, no store change, no concept exposed to anyone. **If draft views are ever built, the
+migration becomes data-only instead of structural** — a backfill and a `not null`, rather than
+adding a column to a table full of live containers and reworking every query that reads it.
+
+It costs one nullable column today. Adding it later costs a migration on production data.
+
+> Two translations from VARIATIONS.md, which predates the shared database: it says `containers`
+> (now `planner_containers`) and `current_profile()` (now `my_org_type()` / `my_org_role()`).
+> Its `draft_views` table and RLS sketch should be re-read against this file if the feature is
+> ever picked up — but the hedge itself is unaffected.
+
 > `planner_containers.ofq_reference` is the forwarder's number on a committed container.
 > RatesApp's `OFQID` is a column in its rates-input CSV. **Same word, different things.** No
 > join, no shared handling.
