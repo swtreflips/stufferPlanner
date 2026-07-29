@@ -426,15 +426,80 @@ That is the right boundary: history should record *what a person supplied*, not 
 database computed from it. A per-case figure that shifts because internal re-pushed a quantity
 is not a supplier changing their mind, and logging it as one would be misleading.
 
-Queries it enables:
+### Querying the slippage — no extra schema needed
+
+Everything about how dates move is already answerable from this table. A view is convenience,
+not capability.
+
+**One distinction to build in: the first set is not a slip.** `NULL → 2026-05-25` is a supplier
+finally answering; `2026-05-25 → 2026-06-28` is five weeks of slippage. Counting them together
+overstates the problem and makes a responsive supplier look like a bad one.
 
 ```sql
--- how far has this line slipped, and in how many moves?
-select count(*) as moves,
-       max(new_value::date) - min(old_value::date) as net_days
-from planner_po_line_events
-where po_line_id = $1 and field = 'cargo_ready';
+-- one row per genuine MOVE, with its size
+create view planner_crd_movements as
+select
+  e.po_line_id,
+  l.organization_id,
+  l.document_number, l.line_id, l.sku,
+  e.old_value::date                       as moved_from,
+  e.new_value::date                       as moved_to,
+  e.new_value::date - e.old_value::date   as days_moved,   -- negative = pulled EARLIER
+  e.created_at                            as moved_at,
+  e.changed_by, e.source
+from planner_po_line_events e
+join planner_po_lines l on l.id = e.po_line_id
+where e.field = 'cargo_ready'
+  and e.old_value is not null            -- exclude the first set: that is an answer, not a slip
+  and e.new_value is not null;
 ```
+
+That one view answers the questions you would actually ask:
+
+```sql
+-- worst offenders: who pushes dates furthest, and how often?
+select organization_id,
+       count(*)                     as moves,
+       count(distinct po_line_id)   as lines_affected,
+       sum(days_moved)              as total_days_pushed,
+       round(avg(days_moved), 1)    as avg_days_per_move,
+       max(days_moved)              as worst_single_move
+from planner_crd_movements
+where days_moved > 0
+group by organization_id
+order by total_days_pushed desc;
+
+-- lines that keep moving — the ones to stop planning around
+select document_number, line_id, sku, count(*) as moves, sum(days_moved) as net_days
+from planner_crd_movements
+group by 1,2,3
+having count(*) >= 3
+order by net_days desc;
+
+-- did it slip after we committed a container? the expensive kind
+select m.* from planner_crd_movements m
+join planner_allocations a on a.po_line_id = m.po_line_id
+join planner_containers  c on c.id = a.container_id
+where c.committed_at is not null and m.moved_at > c.committed_at;
+```
+
+**Net slippage does not need the log at all** — that is what `original_cargo_ready` is for:
+
+```sql
+select document_number, line_id,
+       cargo_ready - original_cargo_ready as net_days_slipped
+from planner_po_lines
+where original_cargo_ready is not null
+order by net_days_slipped desc nulls last;
+```
+
+Two ways to ask the same question, deliberately. The subtraction is cheap enough to sort a grid
+by; the log explains *how it got there* — three small slips read very differently from one
+large one, and only the log can tell them apart.
+
+> `old_value` and `new_value` are `text` so one table can log dates and numerics alike. Date
+> arithmetic therefore needs an explicit `::date` cast. Worth the mild ugliness: a typed column
+> per field would mean a new column every time a field becomes historised.
 
 ### `planner_containers`, `planner_allocations`, `planner_sequences`
 
