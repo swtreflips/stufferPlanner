@@ -171,8 +171,12 @@ destination            text
 
 -- factory-owned
 cargo_ready            date
-cbm_per_case           numeric
-cbm_total              numeric
+cbm_per_case           numeric(12,6)   -- INPUT: one of these two. see "CBM: give either" below
+cbm_total              numeric(12,3)   -- INPUT: the other
+
+-- resolved — GENERATED, never written by anyone
+cbm_per_case_eff       numeric(12,6) generated
+cbm_total_eff          numeric(12,3) generated
 
 -- planning
 original_cargo_ready   date        -- stamped on FIRST set, never updated
@@ -189,6 +193,71 @@ got there*; this answers *how bad is it*, cheaply enough to sort a grid by.
 
 **`organization_id` means whose data this is, not who typed it.** An internal user editing a
 factory's line on their behalf leaves `organization_id` pointing at the factory.
+
+### CBM: give either, get both
+
+Suppliers do not agree on how to express volume. Some know the per-case figure from the carton
+spec; some only compute a total for the shipment. **Accept whichever they have and derive the
+other in the database** — never in the app, and never asking the user to convert.
+
+This is exactly the shape RatesApp's drayage fuel surcharge already uses: two nullable input
+columns, two `GENERATED ALWAYS … STORED` columns, no trigger. See `RatesApp/DRAY.md` §6d.
+
+```sql
+-- INPUTS: the supplier fills in ONE. Both nullable; neither is authoritative alone.
+cbm_per_case numeric(12,6),
+cbm_total    numeric(12,3),
+
+-- resolved per-case: per-case wins if given; else derive from total; guard quantity > 0
+cbm_per_case_eff numeric(12,6) generated always as (
+  case
+    when cbm_per_case is not null then cbm_per_case
+    when cbm_total is not null and quantity > 0 then round(cbm_total / quantity, 6)
+    else 0
+  end
+) stored,
+
+-- resolved total: total wins if given; else derive from per-case
+cbm_total_eff numeric(12,3) generated always as (
+  coalesce(cbm_total, round(cbm_per_case * quantity, 3), 0)
+) stored,
+```
+
+Worked through the user's example: `quantity = 1550`, `cbm_total = 66` →
+`cbm_per_case_eff = round(66 / 1550, 6) = 0.042581`. Given `cbm_per_case = 0.042581` instead →
+`cbm_total_eff = round(0.042581 × 1550, 3) = 66.001`.
+
+**Each `_eff` column prefers its own direct input** — the same rule as `fuel_surcharge_amount`
+(nominal wins) and `fuel_surcharge_pct_eff` (percentage wins). The app reads only the `_eff`
+columns and does **no client math**: one source of truth for the grid, capacity calculations
+and export alike.
+
+Three consequences worth stating, because two are traps:
+
+- **Generated columns are writable by nobody**, including a service-role push. That is a
+  feature: the derivation cannot be bypassed or disagreed with. It also means the column-write
+  trigger and the history log both operate on the *input* columns only
+- **A generated column may not reference another generated column** in Postgres. If a total-CBM
+  rollup per container is ever wanted as a generated column, the expression has to be repeated,
+  not referenced — the same footnote `DRAY.md` carries for `total_rate`
+- ⚠️ **`quantity` is the divisor, and unlike drayage's `rate` it changes.** Internal re-pushes
+  quantities weekly. If a supplier supplied `cbm_per_case`, that is intrinsic to the carton and
+  `cbm_total_eff` correctly re-scales. **If they supplied `cbm_total`, a later quantity change
+  silently moves `cbm_per_case_eff`** while the stored total stays put
+
+That last point argues for **treating `cbm_per_case` as the preferred input** — nudge it in the
+upload template and the grid, since it is the quantity-independent one. Worth deciding whether
+the app should persist the derived per-case value when only a total is supplied, which would
+make it stable against re-pushes. That is an app decision, not a schema one; generated columns
+cannot write back.
+
+- [ ] **Decide the divisor.** `quantity` or `quantity_available`? The enrich file's column is
+      *Quantity Remaining*, and the worked example above uses it — but `plannerInput.csv`
+      supplies both `Quantity` and `Quantity Available`. Total CBM measured against ordered
+      quantity and against remaining quantity are different numbers
+- [ ] Consider a check constraint rejecting the case where **both** are supplied and disagree
+      beyond a tolerance. Without one, `cbm_per_case_eff × quantity` need not equal
+      `cbm_total_eff` — the same latent inconsistency drayage accepts for fuel
 
 ### `planner_po_line_events` — append-only history
 
@@ -216,6 +285,12 @@ Putting it in a trigger rather than in application code is the whole design:
 
 `source` is what makes *"who keeps moving this date?"* answerable — a bulk push slipping a date
 is a supply problem; a person moving it by hand three times is a different conversation.
+
+**The log records the INPUT columns only** — `cargo_ready`, `cbm_per_case`, `cbm_total`. The
+`_eff` columns are generated and can never be updated, so they can never generate an event.
+That is the right boundary: history should record *what a person supplied*, not what the
+database computed from it. A per-case figure that shifts because internal re-pushed a quantity
+is not a supplier changing their mind, and logging it as one would be misleading.
 
 Queries it enables:
 
@@ -287,6 +362,10 @@ its own lines.
 -- A factory may change ONLY cargo_ready, cbm_per_case, cbm_total.
 -- Everything else must be identical to the old row, or the update is rejected.
 ```
+
+The `_eff` columns need no mention: **generated columns are writable by nobody**, so the
+derivation is safe from every write path including a service-role push. The trigger only ever
+has to reason about the three input columns.
 
 For the MVP **internal may write those same three fields too** — internal fills them in on a
 factory's behalf while the process beds in. That is a deliberate relaxation of CLAUDE.md's
@@ -379,6 +458,14 @@ Not "it runs" — these each have a failing case.
 7. Slippage per line matches `cargo_ready - original_cargo_ready`
 8. `commit_container` called by a factory is rejected; `uncommit_container` called by a
    non-admin internal user is rejected
+9. **CBM derives both ways.** Insert `cbm_total = 66` with `quantity = 1550` →
+   `cbm_per_case_eff = 0.042581`. Insert `cbm_per_case = 0.042581` instead →
+   `cbm_total_eff = 66.001`. Supply neither → both read `0`, not NULL
+10. An `update … set cbm_total_eff = 99` is **rejected by Postgres** — generated columns cannot
+    be written, by anyone, including the service role
+11. Changing `quantity` on a line whose supplier gave only `cbm_total` moves
+    `cbm_per_case_eff` and writes **no** history row — confirming the log records supplied
+    values, not computed ones
 
 ---
 
