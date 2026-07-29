@@ -695,6 +695,118 @@ before it exists, and the RLS cannot be tested before two organizations are seed
 
 ---
 
+## Next steps
+
+The route from here to three mock suppliers clicking around a working board. Each step is
+testable on its own, and **nothing above the line it depends on.**
+
+### 0 — Expand. Blocking, and nothing else can start (~2 hrs)
+
+`organizations` does not exist. Verified against the live database **2026-07-28**: `public`
+holds `forwarders` and nothing else.
+
+- [ ] `organizations (id, name, type, code, active)` — `type` must permit
+      `internal | forwarder | customer`
+- [ ] `organization_services (organization_id, service, active)`
+- [ ] **Create rows carrying the existing `forwarders.id` values unchanged**, so every
+      `forwarder_id` already stored is already a valid `organization_id`. A copy, not a remap
+- [ ] `profiles.organization_id` nullable beside `forwarder_id`, backfilled. Verify with a
+      query returning zero mismatches
+- [ ] `organizations.code` — the 2-letter supplier code. `forwarders` has no such column
+- [ ] Widen `profiles.role`'s check (currently `internal | forwarder` only) **or** stop writing
+      `role` and let `organizations.type` carry it
+- [ ] **Change only the bodies of `my_org()` / `my_org_type()`** to read `organization_id`.
+      Every existing policy in RatesApp and Schedules keeps working — that is what the facade
+      was for
+
+RatesApp keeps running on `forwarder_id` throughout. Expand is additive; nothing is dropped
+until HUB2's contract phase, long after this.
+
+### 1 — Identity, and three mock suppliers (~1 hr)
+
+> **The gotcha you will hit in the first five minutes: `profiles.organization_id` is singular.
+> Your own account cannot be both internal and a factory.** To see what a supplier sees you
+> need a *separate login*. Plan for four accounts, not three.
+
+- [ ] Three `organizations` with `type='customer'` and 2-letter codes — real names if these
+      become real onboardings later, since the UUID never changes and handover is data-only
+- [ ] Create the auth users: Dashboard → Authentication → Users → **Add user**, with
+      auto-confirm ticked. An unconfirmed user cannot complete a password sign-in
+- [ ] Insert a `profiles` row per user — `organization_id`, `org_role`, `full_name`.
+      **The auth user must exist first**; `profiles.id` is an FK to `auth.users(id)`
+- [ ] Keep your existing internal account (`profiles.role = 'internal'`, no organization) for
+      the planner side
+- [ ] **Disable new user signups.** No self-registration, for the same reason RatesApp has none
+- [ ] Start the mock-account register: organization, who holds the login, intended real owner
+
+> **You do not need real Supabase accounts to test RLS.** Seed fixtures with fabricated UUIDs
+> exercise every policy locally through `set role authenticated` + a `request.jwt.claims`
+> setting — which is how the schedules isolation test was verified. Real accounts are for the
+> *deployed* mock, and are worth deferring until the policies already pass locally.
+
+### 2 — Schema (~2 hrs)
+
+- [ ] `planner_po_lines` with the two CBM inputs and both generated `_eff` columns
+- [ ] `planner_po_line_events` + the `AFTER UPDATE` trigger
+- [ ] `planner_containers`, `planner_allocations`, `planner_sequences`, `planner_import_batches`
+- [ ] The views: `planner_cbm_observations`, `planner_cbm_reference`, `planner_crd_movements`
+- [ ] `COMMENT ON` every table — `TIER | OWNER | READ BY | purpose`
+- [ ] **Extend `RatesApp/supabase/seed.sql`** with the three customer organizations, their
+      profiles, and enough PO lines across two of them that isolation can actually fail
+- [ ] `supabase db reset` rebuilds clean
+
+Migrations land in **`RatesApp/supabase/migrations/`** — one repo owns the migration history.
+Never `supabase init` in this repo.
+
+### 3 — RLS, before any app work (~1 hr)
+
+- [ ] Policies on all four tables, every one against `my_org_type()` / `my_org()`
+- [ ] `grant select … to authenticated` alongside each — **RLS narrows a grant, it cannot
+      create one.** Miss this and internal users see an empty board that looks like missing data
+- [ ] The BEFORE UPDATE column trigger — factories write only `cargo_ready`, `cbm_per_case`,
+      `cbm_total`
+- [ ] `commit_container` / `uncommit_container` / `next_container_code` as `SECURITY DEFINER`
+      with `set search_path = public`
+- [ ] `anon` gets nothing, anywhere
+- [ ] **Run the isolation test locally and get it green before touching the React app.** Every
+      hour spent debugging RLS through a UI is an hour you did not need to spend
+
+### 4 — Wire the app (~1 day)
+
+The repository abstraction is the seam — [src/data/repos/index.ts](src/data/repos/index.ts)
+flips on `VITE_DATA_SOURCE`. **One repo at a time; the app stays shippable at every step.**
+
+- [ ] `AuthProvider` mirroring RatesApp's: `profiles` the only source of identity, `undefined`
+      = loading, `null` = no access, fail closed, never `user_metadata`
+- [ ] `SupabaseProfileRepo` first — it proves auth end to end and unblocks everything else
+- [ ] Then `SupabaseMasterItemRepo` (read-only), and confirm a factory sees only its own lines
+      **in the actual grid**
+- [ ] Then writes: cargo ready and CBM edits
+- [ ] Then `SupabaseContainerRepo` and `SupabaseAllocationRepo`
+- [ ] `.env` at the rates project; deploys standalone to Vercel exactly as today
+
+### 5 — Test what actually matters (~half day)
+
+Not "it loads". Each of these has a failing case worth catching:
+
+- [ ] **Isolation.** Supplier A sees only A. Supplier B sees zero of A's lines *and zero of A's
+      containers*. Internal sees all three
+- [ ] **Column enforcement.** A factory editing a quantity is rejected by the trigger, not just
+      hidden by the UI
+- [ ] **Date history.** Move a cargo ready date three times; `planner_crd_movements` shows three
+      moves with correct `days_moved`, and the first set is *not* counted as a move
+- [ ] **Idempotence.** Re-upload the same CSV: no table change, no log rows
+- [ ] **CBM both ways.** Supply a total, get a per-case; supply a per-case, get a total.
+      `observed_at` does not move when an unrelated column does
+- [ ] **Containers.** Create a draft, allocate across lines, commit as internal, fail to commit
+      as a factory, fail to uncommit as non-admin
+- [ ] **Presence is a side channel.** If factories cannot see each other's containers, confirm
+      they cannot see each other's *avatars* either
+- [ ] **The anon check.** Pull the key from the built bundle and `curl` every planner table —
+      zero rows, every time
+
+---
+
 ## Keep this file honest
 
 Every state claim here should carry a date and a method, or a command that proves it. The
