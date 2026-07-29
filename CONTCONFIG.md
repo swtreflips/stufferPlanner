@@ -1,5 +1,13 @@
 # CONTCONFIG.md — Container Planning Model
 
+> **The DDL in this file predates the shared Supabase project** — see
+> [STUFFER.md](STUFFER.md), which is now canonical for anything the database does.
+> `suppliers` → `organizations` (`type='customer'`), `supplier_id` → `organization_id`,
+> `master_items` → `planner_po_lines`, `containers` → `planner_containers`,
+> `container_allocations` → `planner_allocations`.
+> **The TypeScript keeps its own vocabulary** — `Supplier`, `supplierId`, `MasterItem` are
+> unchanged; the `Supabase*Repo` layer maps them. Domain language here is still correct.
+
 Canonical design doc for how containers, allocations, and OFQs work in the Stuffer Planner. Supplements [CLAUDE.md](CLAUDE.md). Implemented across Phases 4–7.5.
 
 ---
@@ -95,7 +103,7 @@ This is the OFQ ambiguity fix you wanted: each commit records line + qty, so the
 ## Schema (target shape; Phase 12 lands as Postgres)
 
 ```sql
-create table master_items (
+create table planner_po_lines (
   id              text primary key,
   document_number text not null,
   line_id         integer not null,
@@ -118,7 +126,7 @@ create table master_items (
   constraint committed_le_original check (committed_quantity <= original_quantity)
 );
 
-create table containers (
+create table planner_containers (
   id            uuid primary key default gen_random_uuid(),
   status        text not null check (status in ('draft','committed')),
   name          text not null,
@@ -135,17 +143,17 @@ create table containers (
   )
 );
 
-create table container_allocations (
+create table planner_allocations (
   id              uuid primary key default gen_random_uuid(),
-  container_id    uuid not null references containers(id) on delete cascade,
-  master_item_id  text not null references master_items(id),
+  container_id    uuid not null references planner_containers(id) on delete cascade,
+  po_line_id  text not null references planner_po_lines(id),
   quantity        integer not null check (quantity > 0),
   display_order   integer not null default 0,
   created_at      timestamptz not null default now()
 );
 
 create index on container_allocations(container_id);
-create index on container_allocations(master_item_id);
+create index on container_allocations(po_line_id);
 ```
 
 Notice what's not there: no `scenarios`, no `created_by` / `committed_by`, no `factory_name` siloing columns.
@@ -162,7 +170,7 @@ create function uncommit_container(container_id uuid) returns void;
 ```
 
 `commit_container` in one transaction:
-1. Sum allocations grouped by `master_item_id`; increment `master_items.committed_quantity`.
+1. Sum allocations grouped by `po_line_id`; increment `master_items.committed_quantity`.
 2. Update container: `status = 'committed'`, `ofq_reference`, `committed_at = now()`.
 
 `uncommit_container` is the inverse.
@@ -174,7 +182,7 @@ create function uncommit_container(container_id uuid) returns void;
 User identity is anchored on three tables: `suppliers`, `profiles`, and the existing `auth.users` (Supabase Auth).
 
 ```sql
-create table suppliers (
+create table organizations (
   id         uuid primary key default gen_random_uuid(),
   name       text not null unique,         -- "Ditar S.A", "Tejaswi Plastic Pvt Ltd."
   created_at timestamptz not null default now()
@@ -185,28 +193,28 @@ create table profiles (
   email        text not null unique,
   display_name text not null,              -- "Mike", "Michelle", "Prasad"
   role         text not null check (role in ('admin','internal','factory')),
-  supplier_id  uuid references suppliers(id),
+  organization_id  uuid references organizations(id),
   created_at   timestamptz not null default now(),
   constraint factory_has_supplier check (
-    (role = 'factory' and supplier_id is not null) or
-    (role in ('admin','internal') and supplier_id is null)
+    (role = 'factory' and organization_id is not null) or
+    (role in ('admin','internal') and organization_id is null)
   )
 );
 
-alter table master_items add column supplier_id uuid not null references suppliers(id);
+alter table master_items add column organization_id uuid not null references organizations(id);
 alter table containers   add column committed_by uuid references auth.users(id);
 ```
 
 ### Why a `suppliers` table (not domain mapping)
 
-Some suppliers — like Tejaswi's user on `prasad.tejaswiplastic@gmail.com` — use free email domains shared with millions of unrelated accounts. Domain → supplier mapping is unreliable. Explicit `profile.supplier_id` is the only safe answer. Bonus: supplier renames are one row update, and RLS becomes a clean uuid join instead of string matching.
+Some suppliers — like Tejaswi's user on `prasad.tejaswiplastic@gmail.com` — use free email domains shared with millions of unrelated accounts. Domain → supplier mapping is unreliable. Explicit `profile.organization_id` is the only safe answer. Bonus: supplier renames are one row update, and RLS becomes a clean uuid join instead of string matching.
 
 ### Permissions matrix
 
 | Table | admin | internal | factory |
 |---|---|---|---|
-| `master_items` | full r/w | read all; no write to PO data | read **own supplier only**; UPDATE `cargo_ready`, `cbm_per_case`, `cbm_total` only on rows where `supplier_id = profile.supplier_id` |
-| `containers` (any status) | full r/w; commit/uncommit | full r/w; commit only (no uncommit) | read **own supplier only** (`supplier_id = profile.supplier_id`); INSERT draft (supplier auto-bound to own); UPDATE (draft, non-commit fields); DELETE (draft); no commit/uncommit |
+| `master_items` | full r/w | read all; no write to PO data | read **own supplier only**; UPDATE `cargo_ready`, `cbm_per_case`, `cbm_total` only on rows where `organization_id = profile.organization_id` |
+| `containers` (any status) | full r/w; commit/uncommit | full r/w; commit only (no uncommit) | read **own supplier only** (`organization_id = profile.organization_id`); INSERT draft (supplier auto-bound to own); UPDATE (draft, non-commit fields); DELETE (draft); no commit/uncommit |
 | `container_allocations` | full r/w | full r/w | full r/w on rows in own-supplier draft containers |
 
 Containers follow the same supplier-scoping rule as `master_items`. A factory never sees another supplier's containers (drafts or committed OFQs) — visibility, the AddContainer dialog, and the cross-container drag/drop all enforce it. Admin/Internal see everything; the tray clusters containers by supplier with section labels so the universe stays scannable. The social convention remains *"internal has priority for arrangement; factories only rearrange when necessary."*
@@ -229,23 +237,23 @@ This makes the signature tamper-resistant. `uncommit_container(uuid)` (admin onl
 ### Sample RLS policies for `master_items`
 
 ```sql
-create policy master_items_read on master_items for select using (
+create policy planner_po_lines_read on master_items for select using (
   exists (
     select 1 from profiles p
     where p.id = auth.uid()
       and (
         p.role in ('admin','internal')
-        or (p.role = 'factory' and p.supplier_id = master_items.supplier_id)
+        or (p.role = 'factory' and p.organization_id = master_items.organization_id)
       )
   )
 );
 
-create policy master_items_factory_update on master_items for update using (
+create policy planner_po_lines_factory_update on master_items for update using (
   exists (
     select 1 from profiles p
     where p.id = auth.uid()
       and p.role = 'factory'
-      and p.supplier_id = master_items.supplier_id
+      and p.organization_id = master_items.organization_id
   )
 );
 ```
@@ -321,11 +329,11 @@ The supplier code lives on the `suppliers` table (`code` column, 2 letters, uniq
 
 Deleting a draft container does **not** free up its number. If `DT0002` is deleted, the next new Ditar draft is `DT0003`. References to `DT0002` in external systems will never silently point at a different container.
 
-The sequence is stored in `container_sequences(supplier_code, next_number)` (Phase 12) with atomic increment via the `next_container_code(supplier_code)` Postgres function. Local-dev keeps it in the store as `containerCodeSequences: Record<supplierCode, number>`.
+The sequence is stored in `planner_sequences(org_code, next_number)` (Phase 12) with atomic increment via the `next_container_code(org_code)` Postgres function, where `org_code` is `organizations.code`. Local-dev keeps it in the store as `containerCodeSequences: Record<supplierCode, number>`.
 
 ### Supplier binding
 
-Containers gain `supplier_id` at creation. **Only that supplier's POs can be allocated** into the container — destination match + supplier match, both enforced at drop time and via the `eligibleContainersForMasterItem` selector.
+Containers gain `organization_id` at creation. **Only that supplier's POs can be allocated** into the container — destination match + supplier match, both enforced at drop time and via the `eligibleContainersForMasterItem` selector.
 
 This means mixed-supplier containers are blocked by construction — matching the OFQ semantics where one container ships one supplier's goods.
 

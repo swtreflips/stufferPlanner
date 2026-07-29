@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+> **The DDL in this file predates the shared Supabase project** — see
+> [STUFFER.md](STUFFER.md), which is now canonical for anything the database does.
+> `suppliers` → `organizations` (`type='customer'`), `supplier_id` → `organization_id`,
+> `master_items` → `planner_po_lines`, `containers` → `planner_containers`,
+> `planner_allocations` → `planner_allocations`.
+> **The TypeScript keeps its own vocabulary** — `Supplier`, `supplierId`, `MasterItem` are
+> unchanged; the `Supabase*Repo` layer maps them. Domain language here is still correct.
+
 ## Project Overview
 
 Build a **Stuffer Planner** web application using:
@@ -19,7 +27,7 @@ live tray of draft and committed containers + the master PO grid. Anyone can dra
 rows into containers and arrange the plan; the social convention is that internal
 has priority for arrangement and factories only rearrange when necessary. **Only
 internal/admin can commit** a container (turn a draft into an OFQ that reduces
-master availability). Each user is linked to a `supplier_id` via the `profiles`
+master availability). Each user is linked to a `organization_id` via the `profiles`
 table (factory users only); RLS scopes the master grid to that supplier. The
 planning model is specified in [CONTCONFIG.md](CONTCONFIG.md); the identity /
 RLS model is in [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS".
@@ -502,20 +510,20 @@ whether the eventual Supabase swap is a one-day task or a one-week refactor.
    * Dates: store as `timestamptz`, not strings.
    * `raw` becomes a `jsonb` column.
    * Tables: `suppliers` (with `code`), `profiles`, `master_items` (renamed from
-     `open_po_items`; gains `supplier_id` FK), `containers` (gains
-     `committed_by` FK to `auth.users`, `code` unique, `supplier_id` FK),
-     `container_allocations`, `container_sequences` (atomic per-supplier counter
+     `open_po_items`; gains `organization_id` FK), `containers` (gains
+     `committed_by` FK to `auth.users`, `code` unique, `organization_id` FK),
+     `planner_allocations`, `planner_sequences` (atomic per-supplier counter
      for the `<SUP><NNNN>` code series — see [CONTCONFIG.md](CONTCONFIG.md)
      "Container codes").
      Full DDL in [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS".
 
 10. **RLS is the security boundary, not the UI.** Suppliers are a first-class
-    entity (`suppliers` table). Each profile carries `supplier_id` for
-    factory users; admin/internal have `supplier_id IS NULL`. Factory RLS is a
+    entity (`suppliers` table). Each profile carries `organization_id` for
+    factory users; admin/internal have `organization_id IS NULL`. Factory RLS is a
     uuid join, not a string match — Tejaswi's user on `prasad.tejaswiplastic@gmail.com`
     is one reason domain-based mapping isn't viable. Editable fields for
     factories on `master_items`: `cargo_ready`, `cbm_per_case`, `cbm_total` on
-    rows where `supplier_id = profile.supplier_id`. Commit/uncommit gated to
+    rows where `organization_id = profile.organization_id`. Commit/uncommit gated to
     internal/admin (uncommit admin-only). See [CONTCONFIG.md](CONTCONFIG.md)
     "Identity & RLS" for the canonical spec.
 
@@ -919,9 +927,9 @@ prevent that.
 Sub-tasks:
 
 1. **Schema migration.** Create `supabase/migrations/0001_init.sql` with
-   `suppliers` (with `code`), `profiles`, `master_items` (with `supplier_id`
-   FK), `containers` (with `code` unique, `supplier_id` FK, `committed_by` FK),
-   `container_allocations`, and `container_sequences` (for monotonic
+   `suppliers` (with `code`), `profiles`, `master_items` (with `organization_id`
+   FK), `containers` (with `code` unique, `organization_id` FK, `committed_by` FK),
+   `planner_allocations`, and `planner_sequences` (for monotonic
    per-supplier `<SUP><NNNN>` codes).
    Dates as `timestamptz`, `raw` as `jsonb`. Full DDL in
    [CONTCONFIG.md](CONTCONFIG.md) "Identity & RLS".
@@ -931,11 +939,11 @@ Sub-tasks:
    * `admin` and `internal`: full read/write; both can commit, only admin can
      uncommit.
    * `factory` on `master_items`: `SELECT` and `UPDATE` only rows where
-     `supplier_id = profile.supplier_id`; updatable columns restricted to
+     `organization_id = profile.organization_id`; updatable columns restricted to
      `cargo_ready`, `cbm_per_case`, `cbm_total` via a BEFORE UPDATE trigger.
    * `factory` on `containers`: `SELECT` all; INSERT / DELETE / UPDATE on
      drafts only; no commit / uncommit.
-   * `factory` on `container_allocations`: `SELECT` all; full CRUD on rows
+   * `factory` on `planner_allocations`: `SELECT` all; full CRUD on rows
      attached to draft containers.
 
 3. **Auth wiring.** Replace the placeholder `AuthProvider` (which currently
@@ -950,7 +958,7 @@ Sub-tasks:
    (e.g. `VITE_DATA_SOURCE=local|supabase`).
 
 5. **Realtime subscriptions.** All sessions subscribe to `master_items`,
-   `containers`, and `container_allocations`. Edits propagate live -- that's
+   `containers`, and `planner_allocations`. Edits propagate live -- that's
    the whole point of replacing the Excel ping-pong. RLS filters write-paths,
    not the read stream (everyone reads everything).
 

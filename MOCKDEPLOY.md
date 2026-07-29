@@ -1,5 +1,24 @@
 # Mock deployment: Supabase backend + RLS + audit + Python push + Cloudflare gate + magic-link
 
+> ## ⚠️ Superseded in part — read [STUFFER.md](STUFFER.md) first
+>
+> This file was written before the planner joined the **shared** Supabase project that already
+> holds RatesApp and Schedules. Its reasoning stands; several concrete decisions do not.
+>
+> | This file says | Now |
+> |---|---|
+> | a `organizations` table | **`organizations`** with `type='customer'` — there is no `organizations` table |
+> | `supplier_id` | **`organization_id`** |
+> | `profiles` keyed by **email**, no FK to `auth.users` | the **shared** `profiles`, keyed `id → auth.users(id)`. Create the auth user first, then the profile |
+> | `current_profile()` | **`my_org()` / `my_org_type()` / `my_org_role()`** — already deployed |
+> | `role check(admin\|internal\|factory)` | `organizations.type` **+** `profiles.org_role` (`admin`\|`member`) |
+> | `master_items`, `containers`, … | **`planner_*`** prefixed |
+> | `container_sequences(supplier_code)` | **`planner_sequences`** on `organizations.code` |
+> | Cloudflare Zero Trust for factories | **dropped** — factories get no Access account; RLS is the boundary |
+>
+> **Domain words are still correct.** A supplier is still a supplier; it is stored as an
+> organization row. Only SQL identifiers changed. Full table: STUFFER.md → *The canonical mapping*.
+
 ## Context
 
 Before the real launch, stand up a **mock deployment** with real colleagues acting
@@ -55,7 +74,7 @@ there is still no password to manage anywhere.
 
 ## Users & orgs (seed)
 
-`suppliers`: **Silvia Paper Inc.** (code `SP`), **Luis Paper Inc.** (code `LP`).
+`organizations`: **Silvia Paper Inc.** (code `SP`), **Luis Paper Inc.** (code `LP`).
 
 `profiles` (keyed by `email`, used by RLS):
 
@@ -67,62 +86,64 @@ there is still no password to manage anywhere.
 | Jordan@ptpbags.com | Jordan | internal | — | ptp |
 
 Silvia & Luis **share `@primetimepackaging.com`** → proves identity must be
-per-email `profile.supplier_id`, never domain mapping.
+per-email `profile.organization_id`, never domain mapping.
 
 ## 1. Schema — `supabase/migrations/0001_init.sql`
 
 Base tables per CONTCONFIG ("Schema" + "Identity & RLS"), with these concrete
 choices/additions:
 
-- `suppliers(id uuid pk, name unique, code text unique check 2-letter, created_at)`.
+- ~~`suppliers(...)`~~ → **`organizations(id uuid pk, name unique, code text unique check
+  2-letter, type check(internal|forwarder|customer), active, created_at)`** — shared with
+  RatesApp and Schedules. Factories are rows with `type='customer'`.
 - `profiles(id uuid pk default gen_random_uuid(), email citext unique not null,
-  display_name, role check(admin|internal|factory), supplier_id fk null,
+  display_name, role check(admin|internal|factory), organization_id fk null,
   org_name text, created_at, constraint factory_has_supplier)`. Keyed by **email**
   and linked to the magic-link session via the email claim — **no hard FK to
   auth.users** (profiles are seeded *before* a user's first magic-link login, which
   is when their `auth.users` row is created). `*_by` stamps reference `profiles(id)`.
-- `master_items` per CONTCONFIG: `supplier_id` FK **not null**, dates as
+- `planner_po_lines` per CONTCONFIG: `organization_id` FK **not null**, dates as
   `timestamptz`, `raw jsonb`, `original_quantity`/`committed_quantity` with the
   `committed_le_original` check. Add `cargo_ready_factory_set boolean default
   false`, `cbm_factory_set boolean default false` to drive the push conflict policy.
-- `containers` per CONTCONFIG: `code unique`, `supplier_id` FK, `committed_by`,
+- `containers` per CONTCONFIG: `code unique`, `organization_id` FK, `committed_by`,
   `capacity_cbm`, plus the logistics columns we ship today — `logistics_status`,
   `booking jsonb`, `schedule jsonb`, `booked_at/by`, `scheduled_at/by`,
   `shipped_at/by` (mirrors [container.ts](src/types/container.ts)).
-- `container_allocations` per CONTCONFIG.
-- `container_sequences(supplier_code text pk, next_number int not null default 1)`.
-- **NEW** `master_item_field_history(id bigint identity pk, master_item_id fk,
+- `planner_allocations` per CONTCONFIG.
+- `planner_sequences(org_code text pk, next_number int not null default 1)`.
+- **NEW** `planner_po_line_events(id bigint identity pk, po_line_id fk,
   field check(cargo_ready|cbm_per_case|cbm_total), old_value text, new_value text,
   changed_by text, changed_at timestamptz default now())`.
-- `import_batches(id uuid pk, pushed_at timestamptz default now(), source text,
+- `planner_import_batches(id uuid pk, pushed_at timestamptz default now(), source text,
   row_count int)` — anchors the conflict policy and ops tracking.
 
 ## 2. Audit history (the "when did they update cargo ready" ask)
 
-`AFTER UPDATE ON master_items` trigger: for each of `cargo_ready`,
-`cbm_per_case`, `cbm_total` that changed, insert a `master_item_field_history`
+`AFTER UPDATE ON planner_po_lines` trigger: for each of `cargo_ready`,
+`cbm_per_case`, `cbm_total` that changed, insert a `planner_po_line_events`
 row with `changed_by = auth.jwt()->>'email'` (null for the service-role push) and
 `changed_at = now()`. The same trigger sets `*_factory_set = true` when the
 caller is a factory, so the Python push can preserve factory edits.
 
 ## 3. RLS (adapt CONTCONFIG to email identity)
 
-- Helper `current_profile()` → the `profiles` row for `auth.jwt()->>'email'`
+- Helper `my_org_type()` → the `profiles` row for `auth.jwt()->>'email'`
   (SQL `stable`). Used by every policy.
 - Policies per the CONTCONFIG permissions matrix:
-  - `master_items`: admin/internal read all; factory reads/updates only
-    `supplier_id = current_profile().supplier_id`. A **BEFORE UPDATE** trigger
+  - `planner_po_lines`: admin/internal read all; factory reads/updates only
+    `organization_id = my_org()`. A **BEFORE UPDATE** trigger
     rejects factory writes to any column other than
     `cargo_ready / cbm_per_case / cbm_total`.
-  - `containers` / `container_allocations`: factory scoped to own supplier (read +
+  - `containers` / `planner_allocations`: factory scoped to own supplier (read +
     draft CRUD, no commit/uncommit); admin/internal full; only admin uncommits.
-  - `master_item_field_history`: read by admin/internal and the owning factory;
+  - `planner_po_line_events`: read by admin/internal and the owning factory;
     insert only via the trigger.
 
-## 4. RPCs (`SECURITY DEFINER`, stamp identity from `current_profile()`)
+## 4. RPCs (`SECURITY DEFINER`, stamp identity from `my_org_type()`)
 
-- `next_container_code(supplier_code)` — atomic upsert+increment of
-  `container_sequences`, returns `<SUP><NNNN>`.
+- `next_container_code(org_code)` — atomic upsert+increment of
+  `planner_sequences`, returns `<SUP><NNNN>`.
 - `commit_container(container_id, ofq_ref)` / `uncommit_container(container_id)` —
   sum allocations, move `committed_quantity`, flip status + stamps, in one tx
   (admin/internal commit; admin-only uncommit).
@@ -153,8 +174,8 @@ caller is a factory, so the Python push can preserve factory edits.
   read the session email (`supabase.auth.getUser()`), fetch the `Profile` via
   `profileRepo` by email, expose the same `AuthContextValue` (consumers unchanged) +
   loading / signed-out states. No session → render the magic-link screen.
-- **Realtime**: subscribe to `master_items`, `containers`,
-  `container_allocations`; upsert-by-id into the store (idempotent, so optimistic
+- **Realtime**: subscribe to `planner_po_lines`, `containers`,
+  `planner_allocations`; upsert-by-id into the store (idempotent, so optimistic
   local writes + realtime echoes don't duplicate).
 - **Presence/locks**: swap [presenceChannel.ts](src/data/presenceChannel.ts) from
   `BroadcastChannel` to **Supabase Realtime Presence** so locks work
@@ -164,12 +185,12 @@ caller is a factory, so the Python push can preserve factory edits.
 
 - Uses the **service-role key** (server/CI env only — never `VITE_`, never
   client). Bypasses RLS by design.
-- Resolve each row's org name → `supplier_id` (suppliers seeded first; optionally
+- Resolve each row's org name → `organization_id` (suppliers seeded first; optionally
   upsert unknown orgs).
-- **Upsert `master_items` on `(document_number, line_id)`**: admin-authoritative
+- **Upsert `planner_po_lines` on `(document_number, line_id)`**: admin-authoritative
   columns always overwritten; `cargo_ready / cbm_per_case / cbm_total` preserved
   when `*_factory_set = true` (factory wins since last push). New rows insert with
-  all fields. Writes an `import_batches` row each run.
+  all fields. Writes an `planner_import_batches` row each run.
 - `scripts/seed.ts`/SQL mirrors `plannerData.csv` → same path for dev/staging.
 
 ## 7. Cloudflare Zero Trust
@@ -200,7 +221,7 @@ passes.
 ### Phase 1 — Database layer (pure SQL, no app)
 - **Depends on:** Phase 0.
 - **Do, in order:** (1) `0001_init.sql` schema → (2) `seed.sql` (suppliers, the 4
-  profiles, sample `master_items` from `plannerData.csv`) → (3) RLS policies +
+  profiles, sample `planner_po_lines` from `plannerData.csv`) → (3) RLS policies +
   the factory BEFORE-UPDATE column-restriction trigger + the AFTER-UPDATE audit
   trigger → (4) RPCs (`next_container_code`, `commit_container`,
   `uncommit_container`, logistics transitions).
@@ -213,9 +234,9 @@ passes.
 ### Phase 2 — Python push (independent of the app)
 - **Depends on:** Phase 1 (schema + suppliers seeded + factory-edit flags/trigger).
 - **Do:** `scripts/push_pos.py` (service-role) — org→supplier resolution, upsert on
-  `(document_number, line_id)`, factory-wins conflict policy, `import_batches` row.
+  `(document_number, line_id)`, factory-wins conflict policy, `planner_import_batches` row.
 - **Gate (Verification #4):** push a batch → new lines appear, a factory-edited
-  cargo-ready survives the push, an `import_batches` row is written.
+  cargo-ready survives the push, an `planner_import_batches` row is written.
 
 ### Phase 3 — App data layer against Supabase (local, magic-link identity)
 - **Depends on:** Phase 1 green. **Key unblock:** magic-link *is* the real identity
@@ -232,7 +253,7 @@ passes.
 
 ### Phase 4 — Realtime + cross-user presence
 - **Depends on:** Phase 3 (working data layer + identity).
-- **Do:** enable Realtime on `master_items`, `containers`, `container_allocations`
+- **Do:** enable Realtime on `planner_po_lines`, `containers`, `planner_allocations`
   and subscribe (id-idempotent upserts); swap `presenceChannel.ts` to **Supabase
   Realtime Presence**.
 - **Gate (Verification #5, two local browsers):** an action by one user shows live
@@ -283,17 +304,17 @@ Phase 0 (accounts)
 
 **Keep the full build.** The mock *is* the production infrastructure dress
 rehearsal — the whole point is that flipping to real suppliers later is
-**data-only**: add a `suppliers` row + a `profiles` row + the email to the
+**data-only**: add a `organizations` row + a `profiles` row + the email to the
 Cloudflare Access policy. No migration, no deploy, no code change. The reorder
 below does **not** cut scope; it proves the risky pieces early so a late surprise
 can't invalidate finished work.
 
 ### Design tenet — onboarding a supplier is data, not code
-- New supplier = `INSERT suppliers(name, 2-letter code)` + `INSERT profiles(email,
-  role='factory', supplier_id)` + add the email to the CF Access policy. Nothing
+- New supplier = `INSERT organizations(name, 2-letter code)` + `INSERT profiles(email,
+  role='factory', organization_id)` + add the email to the CF Access policy. Nothing
   else.
 - The whole architecture must honor this: no supplier names/emails hard-coded in
-  app, RLS, or RPCs — everything resolves through the `profiles`/`suppliers`
+  app, RLS, or RPCs — everything resolves through the `profiles`/`organizations`
   tables and the JWT email claim.
 
 ### Top risks — validate early, not at the end
@@ -307,7 +328,7 @@ can't invalidate finished work.
 2. **Stamp identity from `profiles`, not `auth.users`.** Magic-link *does* create
    `auth.users` rows, so `auth.uid()` works — but profiles are seeded *ahead* of a
    user's first login and keyed by email, so stamp every `*_by` and every RPC with
-   `current_profile().id` (email-resolved) for stability. `committed_by` references
+   `auth.uid()` (email-resolved) for stability. `committed_by` references
    `profiles(id)`, not `auth.users`. Keep `profiles` the single identity source.
 3. **Realtime + optimistic store = reconciliation.** Self-echoes and multi-row
    commit/move events can render transient inconsistency. Choose a strategy
@@ -325,7 +346,7 @@ can't invalidate finished work.
   TTL/heartbeat/sweeper) rides Supabase Realtime **Broadcast**; who's-online uses
   **Presence**. Not a 1:1 transport swap.
 - **Define the `*_factory_set` reset rule** (e.g. cleared on admin edit, or per
-  `import_batches` window) so admin can still correct factory fields via push.
+  `planner_import_batches` window) so admin can still correct factory fields via push.
 - **`cargo_ready` as `date`, not `timestamptz`** (calendar date — avoids TZ
   drift). Add a **reseed/reset script** for iterating the mock.
 - **Vercel-behind-Cloudflare**: CF SSL must be **Full (strict)**, and Vercel
@@ -333,7 +354,7 @@ can't invalidate finished work.
   serverless function is needed — magic-link replaces the token-echo endpoint.
 
 ### Revised phase order (same scope, de-risked)
-- **Phase 1 — DB + RLS + RPCs** (email identity; `*_by = current_profile().id`).
+- **Phase 1 — DB + RLS + RPCs** (email identity; `*_by = auth.uid()`).
   Gate: SQL isolation + audit (unchanged).
 - **Phase 1.5 — Magic-link spike (NEW, before any app build):** a throwaway page
   that runs `signInWithOtp` for one real inbox, confirms the email lands and the
@@ -367,7 +388,7 @@ can't invalidate finished work.
   mapping lives in the SupabaseRepo.
 - **Realtime echo**: keep store upserts id-idempotent.
 - **Cross-user locks** require the Supabase Realtime Presence swap.
-- **Weekly runbook**: Monday → run `push_pos.py` → confirm `import_batches` row +
+- **Weekly runbook**: Monday → run `push_pos.py` → confirm `planner_import_batches` row +
   spot-check a factory-edited line was preserved.
 
 ## Files
@@ -388,12 +409,12 @@ can't invalidate finished work.
    Silvia Paper rows/containers; Jordan sees all; factory `UPDATE` to a non-CBM
    column is rejected; `commit_container` as Jordan works, `uncommit` is denied.
 2. **Audit:** as Silvia, change a cargo-ready date → a
-   `master_item_field_history` row appears with her email + timestamp; CBM edits
+   `planner_po_line_events` row appears with her email + timestamp; CBM edits
    logged too.
 3. **App via Cloudflare:** open the domain as each email — Cloudflare network gate,
    then Supabase magic-link, correct scope; admin full, internal commit-not-uncommit,
    factory own-supplier only.
 4. **Python push:** run `push_pos.py` with a fresh PO batch → new lines appear,
-   a factory-edited cargo-ready is preserved, `import_batches` row written.
+   a factory-edited cargo-ready is preserved, `planner_import_batches` row written.
 5. **Realtime + locks:** two browsers (Silvia, Jordan) — an allocation by one
    shows live for the other; Silvia editing a row blocks Jordan with the lock UI.

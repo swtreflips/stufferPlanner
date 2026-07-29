@@ -92,6 +92,29 @@ Seven conflicts. All load-bearing, none cosmetic.
 | Table names `master_items`, `containers` | **`planner_` prefix** — see below | |
 | **Cloudflare Zero Trust for factories** | **Drop it.** Factories get no Access account | Administering external identities in two systems scales badly, and RLS is already the real boundary |
 
+### The canonical mapping
+
+**Every other document in this repo predates the shared database.** Rather than rewrite their
+reasoning, each now carries a banner pointing here. This table is the single translation:
+
+| Domain word — **still correct in prose** | Database identifier |
+|---|---|
+| supplier, factory | a row in **`organizations`** with `type = 'customer'` |
+| the suppliers list | **`organizations`** — there is no `suppliers` table |
+| supplier id / `supplierId` (TS) | **`organization_id`** |
+| supplier code (`DT`, `TP`) | **`organizations.code`** |
+| master items / open PO lines | **`planner_po_lines`** |
+| containers | **`planner_containers`** |
+| allocations | **`planner_allocations`** |
+| `current_profile()` | **`my_org()` / `my_org_type()` / `my_org_role()`** |
+| role `admin` / `internal` / `factory` | `organizations.type` (`internal`\|`customer`) **+** `profiles.org_role` (`admin`\|`member`) |
+| Cloudflare Access for factories | **dropped** — RLS is the boundary |
+
+**The frontend keeps its own vocabulary.** `Supplier`, `supplierId`, `MasterItem` stay in
+TypeScript; the `Supabase*Repo` layer maps them. That is the normal job of a repository, and
+renaming the domain model to match SQL would be the tail wagging the dog — the app is about
+suppliers and POs, not about organizations and rows.
+
 ### On naming — a deliberate deviation from HUB2
 
 HUB2 says `containers`, `container_allocations`, `master_items` are *"distinct, keep"*. That

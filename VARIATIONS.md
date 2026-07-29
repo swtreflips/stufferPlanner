@@ -11,6 +11,13 @@ question *was* asked and answered, not overlooked.
 Do not implement any of this without an explicit decision to do so. See
 "When to build this" for the trigger conditions.
 
+> **Database names in this file predate the shared Supabase project.** The design holds; the
+> identifiers moved. See [STUFFER.md](STUFFER.md) → *The canonical mapping* — in short:
+> `suppliers` → `organizations` (`type='customer'`), `supplier_id` → `organization_id`,
+> `master_items` → `planner_po_lines`, `containers` → `planner_containers`,
+> `current_profile()` → `my_org()` / `my_org_type()` / `my_org_role()`.
+> **Domain words like "supplier" and "factory" remain correct**; only SQL identifiers changed.
+
 ---
 
 ## The gap this addresses
@@ -287,18 +294,18 @@ create table draft_views (
 create unique index draft_views_single_baseline
   on draft_views (is_baseline) where is_baseline;
 
-alter table containers
+alter table planner_containers
   add column view_id uuid not null references draft_views(id),
-  add column copied_from_container_id uuid references containers(id);
+  add column copied_from_container_id uuid references planner_containers(id);
 
-create index on containers(view_id);
+create index on planner_containers(view_id);
 ```
 
 Migration path: create the baseline row first, backfill every existing container
 with its id, then apply `not null`.
 
 **RLS:** `draft_views` is readable by everyone with a profile. Insert by anyone.
-Update/delete gated per the permissions table above (`created_by = current_profile().id`
+Update/delete gated per the permissions table above (`created_by = auth.uid()`
 for factory, admin/internal otherwise; `is_baseline` rows never deletable).
 
 ### The cheap hedge (worth doing before this is decided)

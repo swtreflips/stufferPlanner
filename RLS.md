@@ -1,5 +1,24 @@
 # RLS.md — Row Level Security guide for Supabase deployment
 
+> ## ⚠️ Superseded in part — read [STUFFER.md](STUFFER.md) first
+>
+> This file was written before the planner joined the **shared** Supabase project that already
+> holds RatesApp and Schedules. Its reasoning stands; several concrete decisions do not.
+>
+> | This file says | Now |
+> |---|---|
+> | a `organizations` table | **`organizations`** with `type='customer'` — there is no `organizations` table |
+> | `supplier_id` | **`organization_id`** |
+> | `profiles` keyed by **email**, no FK to `auth.users` | the **shared** `profiles`, keyed `id → auth.users(id)`. Create the auth user first, then the profile |
+> | `current_profile()` | **`my_org()` / `my_org_type()` / `my_org_role()`** — already deployed |
+> | `role check(admin\|internal\|factory)` | `organizations.type` **+** `profiles.org_role` (`admin`\|`member`) |
+> | `master_items`, `containers`, … | **`planner_*`** prefixed |
+> | `container_sequences(supplier_code)` | **`planner_sequences`** on `organizations.code` |
+> | Cloudflare Zero Trust for factories | **dropped** — factories get no Access account; RLS is the boundary |
+>
+> **Domain words are still correct.** A supplier is still a supplier; it is stored as an
+> organization row. Only SQL identifiers changed. Full table: STUFFER.md → *The canonical mapping*.
+
 Companion to [CONTCONFIG.md](CONTCONFIG.md) and [CLAUDE.md](CLAUDE.md). When the
 local-dev planner ships to Supabase + Vercel, the placeholder `AuthProvider`
 gets replaced by a real Supabase session. Everything else (the lock substrate,
@@ -9,9 +28,9 @@ in production it's RLS on the database.
 
 ## The core invariant
 
-> Every row in `master_items`, `containers`, and `container_allocations` is
-> scoped to one `supplier_id`. Factory users only ever see / write rows where
-> `supplier_id = profile.supplier_id`. Admin and internal see everything; only
+> Every row in `planner_po_lines`, `containers`, and `planner_allocations` is
+> scoped to one `organization_id`. Factory users only ever see / write rows where
+> `organization_id = profile.organization_id`. Admin and internal see everything; only
 > admin and internal can commit (only admin can uncommit). All of this is
 > enforced server-side — the UI is for usability, RLS is the security
 > boundary.
@@ -24,10 +43,10 @@ If that sentence stays true at every step, the rest of this document is plumbing
 auth.users        ← Supabase Auth owns this; one row per signed-in user
    │
    ▼ (1:1 via id)
-profiles          ← display_name, role, supplier_id
+profiles          ← display_name, role, organization_id
    │
    ▼ (factory only; FK)
-suppliers         ← Ditar (DT), Tejaswi (TP), future onboardings
+organizations     ← Ditar (DT), Tejaswi (TP), future onboardings
 ```
 
 - **`auth.users`** — managed by Supabase. You don't touch this directly; users
@@ -35,13 +54,13 @@ suppliers         ← Ditar (DT), Tejaswi (TP), future onboardings
 - **`profiles`** — your join. Every signed-in user MUST have a profile row, or
   RLS will (correctly) reject every read. A trigger or admin step inserts the
   profile.
-- **`suppliers`** — canonical supplier list with the 2-letter code (`DT`, `TP`,
+- **`organizations`** — canonical supplier list with the 2-letter code (`DT`, `TP`,
   …). Each factory profile references one supplier.
 
-### Why explicit `supplier_id` (not email-domain mapping)
+### Why explicit `organization_id` (not email-domain mapping)
 
 Some factory users sign in with free domains (Prasad uses `…@gmail.com`).
-Mapping email → supplier is impossible. The explicit `profiles.supplier_id`
+Mapping email → supplier is impossible. The explicit `profiles.organization_id`
 is the only safe answer. Bonus: supplier renames are one row update.
 
 ## Per-table policies
@@ -68,18 +87,18 @@ create policy profiles_internal_read on profiles for select using (
 -- script (see "Onboarding" below).
 ```
 
-### `suppliers`
+### `organizations`
 
 ```sql
-alter table suppliers enable row level security;
+alter table organizations enable row level security;
 
 -- Everyone authenticated reads the list (needed for code rendering + dropdowns).
-create policy suppliers_authenticated_read on suppliers for select using (
+create policy organizations_authenticated_read on organizations for select using (
   auth.uid() is not null
 );
 
 -- Writes are admin-only.
-create policy suppliers_admin_write on suppliers for all using (
+create policy organizations_admin_write on organizations for all using (
   exists (
     select 1 from profiles me
     where me.id = auth.uid() and me.role = 'admin'
@@ -87,33 +106,33 @@ create policy suppliers_admin_write on suppliers for all using (
 );
 ```
 
-### `master_items`
+### `planner_po_lines`
 
 ```sql
-alter table master_items enable row level security;
+alter table planner_po_lines enable row level security;
 
-create policy master_items_read on master_items for select using (
+create policy planner_po_lines_read on planner_po_lines for select using (
   exists (
     select 1 from profiles me
     where me.id = auth.uid()
       and (
         me.role in ('admin','internal')
-        or (me.role = 'factory' and me.supplier_id = master_items.supplier_id)
+        or (me.role = 'factory' and me.organization_id = planner_po_lines.organization_id)
       )
   )
 );
 
-create policy master_items_factory_update on master_items for update using (
+create policy planner_po_lines_factory_update on planner_po_lines for update using (
   exists (
     select 1 from profiles me
     where me.id = auth.uid()
       and me.role = 'factory'
-      and me.supplier_id = master_items.supplier_id
+      and me.organization_id = planner_po_lines.organization_id
   )
 );
 
 -- INSERT is admin-only (master data arrives via Phase 11 API push).
-create policy master_items_admin_insert on master_items for insert with check (
+create policy planner_po_lines_admin_insert on planner_po_lines for insert with check (
   exists (
     select 1 from profiles me
     where me.id = auth.uid() and me.role = 'admin'
@@ -128,20 +147,20 @@ section.
 ### `containers`
 
 ```sql
-alter table containers enable row level security;
+alter table planner_containers enable row level security;
 
-create policy containers_read on containers for select using (
+create policy planner_containers_read on planner_containers for select using (
   exists (
     select 1 from profiles me
     where me.id = auth.uid()
       and (
         me.role in ('admin','internal')
-        or (me.role = 'factory' and me.supplier_id = containers.supplier_id)
+        or (me.role = 'factory' and me.organization_id = planner_containers.organization_id)
       )
   )
 );
 
-create policy containers_insert on containers for insert with check (
+create policy planner_containers_insert on planner_containers for insert with check (
   status = 'draft'
   and committed_at is null
   and committed_by is null
@@ -151,31 +170,31 @@ create policy containers_insert on containers for insert with check (
     where me.id = auth.uid()
       and (
         me.role in ('admin','internal')
-        or (me.role = 'factory' and me.supplier_id = containers.supplier_id)
+        or (me.role = 'factory' and me.organization_id = planner_containers.organization_id)
       )
   )
 );
 
-create policy containers_draft_update on containers for update using (
+create policy planner_containers_draft_update on planner_containers for update using (
   status = 'draft'
   and exists (
     select 1 from profiles me
     where me.id = auth.uid()
       and (
         me.role in ('admin','internal')
-        or (me.role = 'factory' and me.supplier_id = containers.supplier_id)
+        or (me.role = 'factory' and me.organization_id = planner_containers.organization_id)
       )
   )
 );
 
-create policy containers_delete on containers for delete using (
+create policy planner_containers_delete on planner_containers for delete using (
   status = 'draft'
   and exists (
     select 1 from profiles me
     where me.id = auth.uid()
       and (
         me.role in ('admin','internal')
-        or (me.role = 'factory' and me.supplier_id = containers.supplier_id)
+        or (me.role = 'factory' and me.organization_id = planner_containers.organization_id)
       )
   )
 );
@@ -184,44 +203,44 @@ create policy containers_delete on containers for delete using (
 -- security-definer RPCs (commit_container, uncommit_container) below.
 ```
 
-### `container_allocations`
+### `planner_allocations`
 
 ```sql
-alter table container_allocations enable row level security;
+alter table planner_allocations enable row level security;
 
-create policy container_allocations_read on container_allocations for select using (
+create policy planner_allocations_read on planner_allocations for select using (
   exists (
-    select 1 from containers c
+    select 1 from planner_containers c
     join profiles me on me.id = auth.uid()
-    where c.id = container_allocations.container_id
+    where c.id = planner_allocations.container_id
       and (
         me.role in ('admin','internal')
-        or (me.role = 'factory' and me.supplier_id = c.supplier_id)
+        or (me.role = 'factory' and me.organization_id = c.organization_id)
       )
   )
 );
 
-create policy container_allocations_write on container_allocations for all using (
+create policy planner_allocations_write on planner_allocations for all using (
   exists (
-    select 1 from containers c
+    select 1 from planner_containers c
     join profiles me on me.id = auth.uid()
-    where c.id = container_allocations.container_id
+    where c.id = planner_allocations.container_id
       and c.status = 'draft'
       and (
         me.role in ('admin','internal')
-        or (me.role = 'factory' and me.supplier_id = c.supplier_id)
+        or (me.role = 'factory' and me.organization_id = c.organization_id)
       )
   )
 );
 ```
 
-### `container_sequences`
+### `planner_sequences`
 
 Holds the monotonic counter for `<SUP><NNNN>`. Never touched directly by the
 client — only the `next_container_code` RPC reads / updates it.
 
 ```sql
-alter table container_sequences enable row level security;
+alter table planner_sequences enable row level security;
 -- No client-facing policies. Only the SECURITY DEFINER RPC touches it.
 ```
 
@@ -244,17 +263,17 @@ begin
     raise exception 'only admin or internal users can commit containers';
   end if;
 
-  update master_items m
+  update planner_po_lines m
   set committed_quantity = m.committed_quantity + sub.alloc_total
   from (
-    select master_item_id, sum(quantity) as alloc_total
-    from container_allocations
+    select po_line_id, sum(quantity) as alloc_total
+    from planner_allocations
     where container_id = p_container_id
-    group by master_item_id
+    group by po_line_id
   ) sub
-  where m.id = sub.master_item_id;
+  where m.id = sub.po_line_id;
 
-  update containers
+  update planner_containers
   set status = 'committed',
       ofq_reference = p_ofq_ref,
       committed_at = now(),
@@ -289,17 +308,17 @@ begin
     raise exception 'only admin can uncommit containers';
   end if;
 
-  update master_items m
+  update planner_po_lines m
   set committed_quantity = m.committed_quantity - sub.alloc_total
   from (
-    select master_item_id, sum(quantity) as alloc_total
-    from container_allocations
+    select po_line_id, sum(quantity) as alloc_total
+    from planner_allocations
     where container_id = p_container_id
-    group by master_item_id
+    group by po_line_id
   ) sub
-  where m.id = sub.master_item_id;
+  where m.id = sub.po_line_id;
 
-  update containers
+  update planner_containers
   set status = 'draft',
       ofq_reference = null,
       committed_at = null,
@@ -321,10 +340,10 @@ returns text language plpgsql security definer
 set search_path = public as $$
 declare n integer;
 begin
-  insert into container_sequences (prefix, next_number)
+  insert into planner_sequences (prefix, next_number)
   values (upper(p_supplier_code), 2)
   on conflict (prefix)
-  do update set next_number = container_sequences.next_number + 1
+  do update set next_number = planner_sequences.next_number + 1
   returning next_number - 1 into n;
   return upper(p_supplier_code) || lpad(n::text, 4, '0');
 end $$;
@@ -339,7 +358,7 @@ race atomically.
 ## Column-level write restriction (trigger)
 
 Factories may only UPDATE `cargo_ready`, `cbm_per_case`, `cbm_total` on
-`master_items`. The RLS policy lets them touch their rows; the trigger blocks
+`planner_po_lines`. The RLS policy lets them touch their rows; the trigger blocks
 column-level abuse:
 
 ```sql
@@ -351,10 +370,10 @@ begin
   if caller_role <> 'factory' then return new; end if;
 
   if (new.id, new.document_number, new.line_id, new.sku, new.name, new.ship_to,
-      new.original_quantity, new.committed_quantity, new.supplier_id, new.raw)
+      new.original_quantity, new.committed_quantity, new.organization_id, new.raw)
      is distinct from
      (old.id, old.document_number, old.line_id, old.sku, old.name, old.ship_to,
-      old.original_quantity, old.committed_quantity, old.supplier_id, old.raw)
+      old.original_quantity, old.committed_quantity, old.organization_id, old.raw)
   then
     raise exception 'factory users may only update cargo_ready, cbm_per_case, cbm_total';
   end if;
@@ -362,7 +381,7 @@ begin
 end $$;
 
 create trigger master_items_factory_column_guard_t
-before update on master_items
+before update on planner_po_lines
 for each row execute function master_items_factory_column_guard();
 ```
 
@@ -377,7 +396,7 @@ You'll be adding more factories. Recommended flow:
 
 ```sql
 -- One-time per supplier, run by admin (via Supabase SQL editor).
-insert into suppliers (name, code) values ('Acme Plastics Ltd.', 'AP');
+insert into organizations (name, code, type) values ('Acme Plastics Ltd.', 'AP', 'customer');
 ```
 
 Code is 2 letters, uppercase, unique. If your first pick collides, try a
@@ -392,35 +411,35 @@ different two letters (`AC`, `AM`). The constraint will tell you.
 2. After they accept (set password / magic-link), copy the new `auth.users.id`.
 3. Insert their profile:
    ```sql
-   insert into profiles (id, email, display_name, role, supplier_id)
+   insert into profiles (id, email, display_name, role, organization_id)
    values ('uuid-from-auth-users', 'aida@acmeplastics.example', 'Aida', 'factory',
-           (select id from suppliers where name = 'Acme Plastics Ltd.'));
+           (select id from organizations where name = 'Acme Plastics Ltd.'));
    ```
 
 **Path B — Admin-only RPC (server-managed; scales better)**
 
 When onboarding pace picks up, wrap the above into
-`create_factory_user(email, display_name, supplier_id)` running on a Supabase
+`create_factory_user(email, display_name, organization_id)` running on a Supabase
 Edge Function with the service role. Returns the new profile. Never call from
 the browser — the service role bypasses all RLS.
 
 ### Internal team members
 
-Same flow, `role = 'internal'`, `supplier_id = null`.
+Same flow, `role = 'internal'`, `organization_id = null`.
 
 ### First admin (chicken-and-egg)
 
 Insert by hand once, then onboard everyone else via the flows above:
 
 ```sql
-insert into profiles (id, email, display_name, role, supplier_id)
+insert into profiles (id, email, display_name, role, organization_id)
 values ('your-auth-user-id', 'hernandez73k@gmail.com', 'Mike', 'admin', null);
 ```
 
 ## Realtime + Presence
 
 Supabase Realtime respects RLS on the read stream. A factory subscribed to
-`master_items` receives events only for their supplier's rows; no extra
+`planner_po_lines` receives events only for their supplier's rows; no extra
 client-side filtering required.
 
 **Caveat — the presence channel.** Editing locks are out-of-band: they're
@@ -460,7 +479,7 @@ user can see.** They are complementary layers of defense, not redundant.
 
 ### What ZT does NOT give you
 
-- **Row-level scoping.** ZT doesn't know about `supplier_id`. Once Prasad is
+- **Row-level scoping.** ZT doesn't know about `organization_id`. Once Prasad is
   past ZT, he could still see Ditar's POs unless RLS keeps him out. **RLS is
   non-negotiable** — ZT is the porch light, RLS is the deadbolt.
 - **A replacement for Supabase Auth.** The Supabase session is what carries
@@ -563,7 +582,7 @@ factory users per supplier). Paid plans start when you exceed the seat count.
 
 ## Anti-patterns
 
-- **Don't trust client-supplied `supplier_id` on INSERT.** The INSERT policies
+- **Don't trust client-supplied `organization_id` on INSERT.** The INSERT policies
   above check it; the trigger backs them up.
 - **Don't expose the service-role key in the browser.** Only the `anon` key
   goes into `VITE_SUPABASE_ANON_KEY`. Service role lives in Edge Functions and
@@ -597,12 +616,12 @@ When pulling the trigger:
    bundle.
 6. **First admin profile row inserted manually.** Then onboarding can use
    that admin.
-7. **Realtime channels.** Subscribe to `master_items`, `containers`,
-   `container_allocations`. RLS filters the events.
+7. **Realtime channels.** Subscribe to `planner_po_lines`, `containers`,
+   `planner_allocations`. RLS filters the events.
 8. **Cloudflare Zero Trust application + policy configured.** The Vercel
    hostname is behind a ZT Access app; the allow-list contains every real
    user's email (admin + internal + every factory user across all
-   suppliers). See *Cloudflare Zero Trust — the gate before the gate*.
+   suppliers). ZT applied to factories is **superseded** — see the banner at the top of this file.
 9. **DNS pointing at Cloudflare** with the proxy (orange-cloud) enabled for
    the Vercel-fronted hostname. Without this, ZT never sees the traffic.
 10. **Smoke test all four roles** end-to-end behind ZT before pointing the
@@ -617,7 +636,7 @@ Supabase Studio's SQL editor supports impersonation:
 
 ```sql
 set local request.jwt.claim.sub = '<some-factory-uuid>';
-select * from master_items;  -- expect only that factory's rows
+select * from planner_po_lines;  -- expect only that factory's rows
 ```
 
 Also do a multi-tab manual test: sign in as each role in a different browser
@@ -625,7 +644,7 @@ profile / incognito window. Verify tray, grid, and dialogs behave per the
 permissions matrix.
 
 Try to break it. Sign in as factory; open the network tab; hand-craft a
-PATCH to `master_items` for another supplier's row. RLS should reject with
+PATCH to `planner_po_lines` for another supplier's row. RLS should reject with
 HTTP 4xx.
 
 ### Automated (future)
