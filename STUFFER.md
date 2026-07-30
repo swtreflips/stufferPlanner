@@ -740,6 +740,48 @@ writer with no policy protecting it.
 
 ---
 
+## The enrich mapping — exactly three fields
+
+The supplier template carries fifteen columns. **Three are read. Everything else is ignored.**
+
+| Enrich column | Maps to | |
+|---|---|---|
+| `Document Number` | `document_number` | **join key** |
+| `Item` | `sku` | **join key** |
+| `Cargo Ready Date` | `cargo_ready` | ✅ read |
+| `Total CBM` | `cbm_total` | ✅ read |
+| `CBM per Case` | `cbm_per_case` | ✅ read **when present** |
+| `Name`, `Date Issued`, `Ship To`, `Requested Ship By`, `Line ID`, `Quantity Available`, `ETD`, `ETA`, `Shipping Agent`, `Status` ×2 | — | **ignored** |
+
+**If `CBM per Case` is absent, it is derived from `Total CBM`** — that is what
+`cbm_per_case_eff` does, dividing by `quantity_available`. The importer never computes it and
+never writes it; a generated column cannot be written by anyone.
+
+`Status` appears twice in the template and is ignored either way, so the duplicate is harmless
+rather than something to fix.
+
+### Ignoring is enforced, not promised
+
+`Quantity Available` appears in the enrich file, and internal's push is authoritative for it. A
+supplier's copy is whatever it was when they were sent the sheet — days or weeks stale.
+
+**The column guard makes this structural.** A factory-authenticated update touching
+`quantity_available`, `due_date`, `destination`, `committed_quantity` or anything else raises:
+
+```
+a supplier may only change cargo_ready, cbm_per_case and cbm_total on a PO line
+```
+
+So a buggy importer that maps too many columns **fails loudly** rather than quietly overwriting
+internal's numbers with stale ones. The rule lives in the database, not in the parser — which
+matters, because the parser is the thing most likely to be rewritten.
+
+> `ETD`, `ETA` and `Shipping Agent` are in the template but belong to a container's journey, not
+> a PO line — `planner_containers.schedule` holds that. Ignoring them here is deliberate, not an
+> oversight.
+
+---
+
 ## Front end
 
 The repository abstraction is already the right seam. Each `Local*Repo` gains a `Supabase*Repo`
