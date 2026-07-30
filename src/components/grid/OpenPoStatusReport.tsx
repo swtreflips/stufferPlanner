@@ -176,7 +176,7 @@ export default function OpenPoStatusReport() {
       },
       {
         field: 'cargoReady',
-        headerName: 'Cargo Ready',
+        headerName: 'Cargo Ready Date',
         width: 130,
         valueFormatter: formatDateCell,
         editable: (params: EditableCallbackParams<MasterItem>) =>

@@ -28,5 +28,5 @@ export const LINE_COLUMNS: LineColumn[] = [
   { key: 'documentNumber', label: 'Doc #', align: 'left' },
   { key: 'sku', label: 'Item', align: 'left' },
   { key: 'quantity', label: 'Qty', align: 'right' },
-  { key: 'cargoReady', label: 'Cargo Ready', align: 'left' },
+  { key: 'cargoReady', label: 'Cargo Ready Date', align: 'left' },
 ]

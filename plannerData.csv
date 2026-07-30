@@ -1,4 +1,4 @@
-Name,Date Issued,Document Number,Ship To,Requested Ship By,Status,Line ID,Name_1,Quantity Remaining,CBM per Case,Total CBM,Cargo Ready,ETD,ETA,Due Date/Receive By,Estimated delivery date,days late,EXPO,Container,Notes
+Name,Date Issued,Document Number,Ship To,Requested Ship By,Status,Line ID,Name_1,Quantity Remaining,CBM per Case,Total CBM,Cargo Ready Date,ETD,ETA,Due Date/Receive By,Estimated delivery date,days late,EXPO,Container,Notes
 Ditar S.A,10/30/2025,PO155276,"Orlando, FL",1/15/2026,,1,LEVI-NK16616-MX,310,0.082,25.389,5/25/2026,1/18/2026,1/22/2026,2/6/2026,2/1/2026,-5,017,KOSU4941991,Shipped
 Ditar S.A,10/30/2025,PO155276,"Orlando, FL",1/15/2026,,2,LEVI-NK13613-MX,620,0.068,42.284,5/28/2026,1/18/2026,1/22/2026,2/6/2026,2/1/2026,-5,017,KOSU4941991,Shipped
 Ditar S.A,,PO154455,"Simi Valley, CA",,,,JKBR-NK13713,225,0.067,15.000,5/20/2026,,,,,,,,
