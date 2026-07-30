@@ -37,10 +37,15 @@ with a table-name collision in the middle.
 
 ---
 
-## Step 0 — `organizations` must exist first
+## Step 0 — `organizations` — ✅ DONE, live in production
 
-**Checked against the live database: it does not.** `public` today holds `forwarders`; there is
-no `organizations` and no `organization_services`.
+Applied and verified **2026-07-28** (`20260728120000_organizations_expand.sql`). All seven
+forwarders carried across with their existing ids, PTP added as `type='internal'`, and all three
+must-be-zero checks green: no forwarder without an organization, no profile whose
+`organization_id` differs from its `forwarder_id`, no internal profile without an organization.
+
+**The planner is what forced it.** Nothing else needed expand — RatesApp runs happily on
+`forwarder_id` and did not change a line.
 
 HUB2 names this as the single ordering constraint in the entire estate plan:
 
@@ -51,30 +56,37 @@ HUB2 names this as the single ordering constraint in the entire estate plan:
 **The planner is what forces expand to land.** Nothing else needed it; RatesApp runs happily on
 `forwarder_id`.
 
-- [ ] **Expand** — `organizations`, `organization_services`, `profiles.organization_id`
-      nullable beside `forwarder_id`, backfilled
-- [ ] **Create `organizations` rows carrying the existing `forwarders.id` values unchanged.**
-      Every `forwarder_id` already stored is then already a valid `organization_id` — a copy,
-      not a remap, and each step verifies with a query returning zero
-- [ ] `organizations.code` — the 2-letter supplier code (`DT`, `TP`). **`forwarders` has no
-      `code` column**; it is used for container numbering and is genuinely useful, so it lands
-      here rather than in a planner-private table
-- [ ] `organizations.type` must permit **`supplier`** — factories
-- [ ] `profiles.role`'s check currently allows only `internal | forwarder`. Either widen it or
-      let `organizations.type` carry the distinction and stop writing `role`
+- [x] `organizations`, `organization_services`, `profiles.organization_id` backfilled
+- [x] Rows carry the existing `forwarders.id` values unchanged — a copy, not a remap, so every
+      `forwarder_id` already stored is already a valid `organization_id`
+- [x] `organizations.code` — the 2-letter code (`DT`, `TP`), which `forwarders` never had
+- [x] `organizations.type` permits `internal | forwarder | supplier`
+- [x] PTP's organization id is **deterministic**, not `gen_random_uuid()` — a random one differs
+      per environment, so `seed.sql` could not reference it and local internal profiles would
+      have had nowhere to point
+- [ ] `profiles.role`'s check still allows only `internal | forwarder`, so seeded factory users
+      carry `role='forwarder'` as a visible workaround. Nothing reads `role` any more — the
+      facade reads `organizations.type` — so widening it is cleanup, not a blocker
 
 `profiles.org_role` (`admin | member`) **already exists** — added with the helper facade.
 
 ### What already exists and must be used
 
 ```sql
-my_org()        -- uuid: whose data this is. NULL for internal users.
-my_org_type()   -- 'internal' | 'forwarder' (later 'supplier'). NULL if no profile row.
+my_org()        -- uuid: the caller's own organization. Now NON-NULL for internal too (PTP).
+my_orgs()       -- setof uuid: own + siblings sharing a group. ONE row when ungrouped.
+my_org_type()   -- 'internal' | 'forwarder' | 'supplier'. NULL if no profile row.
 my_org_role()   -- 'admin' | 'member' within your own organization.
 ```
 
-Deployed, `security definer`, `search_path` pinned. When expand lands, **only their bodies
-change** and every policy written against them keeps working.
+All `security definer` with `search_path` pinned. **Policies scope with
+`organization_id in (select my_orgs())`, never `= my_org()`** — the set form includes sibling
+plants and is identical for an ungrouped organization.
+
+> ⚠️ **`my_org()` is no longer NULL for internal users** — expand gave PTP a real organization.
+> So "internal sees everything" must be `my_org_type() = 'internal'`; an organization comparison
+> would now scope internal to PTP's own rows and hide every supplier line. Earlier drafts of
+> this file relied on that NULL. It is gone.
 
 ---
 
@@ -162,16 +174,56 @@ schema one.
       single ambiguous `CBM`, and no per-case column at all — so the input the design prefers
       cannot currently be supplied)
 
-> **The next question this exposes: how does a supplier NAME resolve to an organization?**
-> `plannerInput.csv` carries `Main Line Name` — 17 distinct values including *"Tejaswi Plastic
-> Pvt Ltd."* and *"Thal Limited – Pakistan Papersack Division"* (note the en-dash). Matching
-> those to `organizations.name` by exact string is fragile: one renamed vendor in NetSuite and
-> a week's PO lines silently import against nothing.
+> **Supplier resolution.** The column is now called **`supplier`** (was `Main Line Name`) and
+> carries 17 distinct values including *"Thal Limited – Pakistan Papersack Division"* — note the
+> en-dash, which is not a hyphen and will not match one.
 >
-> - [ ] Either keep `organizations.name` byte-identical to NetSuite's vendor name and make the
->       import **fail loudly** on an unmatched name, or add an alias table. Do not let an
->       unmatched supplier become a null `organization_id` — that row would be invisible to
->       every factory *and* mis-scoped for internal
+> `organization_id` is `NOT NULL`, so an unmatched name **fails the insert** rather than landing
+> null. That is the safe direction: a null would be invisible to every factory *and* mis-scoped
+> for internal.
+>
+> - [ ] Keep `organizations.name` byte-identical to NetSuite's vendor name and let the import
+>       fail loudly, or add an alias table. Decide before the first real push — a renamed vendor
+>       in NetSuite otherwise stops a week of PO lines with no obvious cause
+
+### Sibling companies — one team, several factories
+
+Some suppliers are several factories run by the same people:
+
+| Group | Members | Why |
+|---|---|---|
+| **Ditar** | Ditar S.A (Colombia) *— the relationship*<br>Packaging Manufacture of America, S.A. (Guatemala) | Different countries, same team, production moves between them |
+| **Junsun** | Junsun Packaging (Thailand) *— the relationship*<br>Qingdao Junsun Packaging (China) | The same legal entity; grouped for operational reasons |
+
+They stay **separate organizations** — different POs, different containers, and *"which factory
+is making this"* must never become unanswerable. What is shared is the people.
+
+**The rule: a group widens ACCESS, never merges OWNERSHIP.** Every row keeps its own
+`organization_id`, container codes stay per-organization (`DT0001`, `PM0001`), and grouping only
+changes who may look.
+
+```sql
+my_orgs()   -- every organization the caller may act for: own + siblings sharing a group.
+            -- Returns exactly ONE row when ungrouped, so it is a strict superset of my_org().
+```
+
+Policies use `organization_id in (select my_orgs())`. An ungrouped supplier behaves exactly as
+it did under `= my_org()`.
+
+**Symmetry is deliberate.** Everyone in a group sees every member, because a group *means* the
+same people run these — the only reason to create one. A sibling run by a **different** team is
+handled by not grouping it, which is how you said you'd want it. No parent/child asymmetry is
+built, because nothing asked for one.
+
+`is_group_primary` records which member is the actual relationship — display and reporting only,
+no extra access, and a partial unique index allows at most one per group.
+
+**Linking or unlinking is one `UPDATE`.** No data moves either way.
+
+The toggle in the UI reads `my_orgs()`: one entry per accessible organization, plus "all".
+Internal's `SupplierFilter` is the same idea over every organization — and note it is a
+**convenience over data RLS already permits**, not a boundary. Hiding the widget protects
+nothing; the policies do.
 
 ### The original problem, kept for the reasoning
 
