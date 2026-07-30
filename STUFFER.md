@@ -868,6 +868,114 @@ before it exists, and the RLS cannot be tested before two organizations are seed
 
 ---
 
+## Onboarding runbook — three mock factories in production
+
+Do these **in order**. Steps 1 and 2 first because they close windows; 4 must precede 5 because
+`profiles.id` is a foreign key to `auth.users(id)`.
+
+### 1. Disable self-registration — do this before anything else
+
+Supabase → **Authentication → Sign In / Providers → Email** → turn **"Allow new users to sign
+up"** OFF.
+
+Without it, anyone who finds the URL can create an account. They would see no data — the
+`profiles` gate denies them — but their token still carries `role='authenticated'`, which is
+what the **geo brain** accepts. A stranger could spend your HERE quota by signing up.
+
+### 2. Widen `profiles.role` — `supabase db push`
+
+`20260729120000_profiles_role_supplier.sql`. Run it **before** creating any factory profile, or
+the first ones written carry `role='forwarder'` and someone has to remember to fix them.
+
+### 3. Create the organizations
+
+Fill in the real names and 2-letter codes, then run in the SQL editor:
+
+```sql
+insert into organizations (name, type, code, active) values
+  ('Ditar S.A',              'supplier', 'DT', true),
+  ('Tejaswi Plastic Pvt Ltd.','supplier', 'TP', true),
+  ('Manchester Paper Bags LLC','supplier','MP', true)
+on conflict (name) do nothing;
+```
+
+> **`name` must match NetSuite's vendor string byte for byte** — it is what the import resolves
+> against. Copy it from `plannerInput.csv`'s `supplier` column, do not retype it. One of the 17
+> contains an en-dash, which is not a hyphen.
+
+**Optional — the sibling groups**, if you want one team handling two plants:
+
+```sql
+insert into organization_groups (name, notes)
+values ('Ditar', 'Colombia is the relationship; Guatemala is a sibling plant, same team')
+on conflict (name) do nothing;
+
+update organizations set group_id = (select id from organization_groups where name='Ditar'),
+       is_group_primary = (name = 'Ditar S.A')
+ where name in ('Ditar S.A', 'Packaging Manufacture of America, S.A.');
+```
+
+Linking or unlinking later is this same `UPDATE`. No data moves.
+
+### 4. Create the auth users — dashboard
+
+Authentication → **Users → Add user**, once per person:
+
+- **Auto Confirm User: ON.** An unconfirmed user cannot complete a password sign-in
+- Use a real address you control — a magic link or reset goes there
+- **You need a separate login to see what a factory sees.** `profiles.organization_id` is
+  singular, so your internal account cannot also be a factory. Plan four accounts, not three
+
+### 5. Create the profiles — SQL editor
+
+**Look the user up by email rather than pasting UUIDs.** The dashboard mints random ids, and
+hand-copying six of them is where a mis-scoped profile comes from:
+
+```sql
+insert into profiles (id, role, organization_id, full_name, org_role)
+select u.id, 'supplier', o.id, 'Ditar Merchandiser', 'admin'
+  from auth.users u, organizations o
+ where u.email = 'someone@ditar.test' and o.name = 'Ditar S.A'
+on conflict (id) do update
+   set organization_id = excluded.organization_id,
+       role            = excluded.role,
+       org_role        = excluded.org_role;
+```
+
+Repeat per person. `org_role = 'admin'` only if they should manage their own organization;
+`'member'` otherwise. It is orthogonal to which organization they belong to.
+
+### 6. Verify — before letting anyone in
+
+```sql
+-- every profile resolves to an organization, and none is orphaned
+select u.email, p.role, o.name, o.type, p.org_role,
+       coalesce(g.name, '(no group)') as group
+  from auth.users u
+  left join profiles p            on p.id = u.id
+  left join organizations o       on o.id = p.organization_id
+  left join organization_groups g on g.id = o.group_id
+ order by o.type nulls first, o.name;
+```
+
+- [ ] **No row with a NULL organization** — a signed-in user with no profile sees nothing, which
+      looks like a broken app rather than a missing row
+- [ ] **Sign in as a factory and confirm the board is empty but the app works.** Production has
+      no PO lines yet; an empty grid is correct
+- [ ] **Sign in with a personal address** — it must be *refused at sign-up*, not merely
+      data-less. That is step 1 working
+- [ ] Only after PO lines exist: sign in as two different factories and confirm neither sees the
+      other's rows
+
+### What this does NOT need
+
+- **No Cloudflare Access for factories.** RLS is the boundary; administering external identities
+  in two systems scales badly
+- **No `suppliers` table** — they are `organizations`
+- **No entry in the geo brain's `ALLOWED_ORIGINS`** unless the planner starts geocoding. It does not
+
+---
+
 ## Next steps
 
 The route from here to three mock suppliers clicking around a working board. Each step is
