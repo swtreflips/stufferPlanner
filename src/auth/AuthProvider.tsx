@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { supabase } from '../lib/supabase'
+import { configError, supabase } from '../lib/supabase'
 import { profileRepo } from '../data/repos'
 import type { Profile } from '../types/profile'
 
@@ -44,6 +44,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null | undefined>(undefined)
   const [loading, setLoading] = useState(true)
+  // A query that FAILED is not the same as a user with no row. Both deny access — fail-closed
+  // is not negotiable — but they need different words on screen, or an RLS or network fault
+  // gets read as "this account was never set up" and someone goes looking in the wrong place.
+  const [profileError, setProfileError] = useState<string | null>(null)
 
   useEffect(() => {
     supabase.auth
@@ -66,14 +70,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let active = true
     setProfile(undefined) // loading — NOT "no access"
+    setProfileError(null)
 
     profileRepo
       .findById(uid)
       .then((p) => {
         if (active) setProfile(p)
       })
-      .catch(() => {
-        if (active) setProfile(null) // fail closed
+      .catch((e: unknown) => {
+        if (!active) return
+        setProfileError(e instanceof Error ? e.message : String(e))
+        setProfile(null) // fail closed regardless — we just say why
       })
     return () => {
       active = false
@@ -81,10 +88,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [session?.user?.id])
 
   // Ordering matters: "still loading" must never fall through to "denied", or a slow network
-  // reads as a locked account.
+  // reads as a locked account. Misconfiguration comes first — without a URL and key every
+  // later gate is guesswork, and "sign in" would fail in a way that looks like a bad password.
+  if (configError) return <Misconfigured detail={configError} />
   if (loading || (session && profile === undefined)) return <Centered>Loading…</Centered>
   if (!session) return <SignIn />
-  if (!profile) return <NoAccess email={session.user.email} />
+  if (!profile) return <NoAccess email={session.user.email} error={profileError} />
 
   return <AuthContext.Provider value={{ user: profile }}>{children}</AuthContext.Provider>
 }
@@ -160,14 +169,33 @@ function SignIn() {
   )
 }
 
-function NoAccess({ email }: { email?: string }) {
+function Misconfigured({ detail }: { detail: string }) {
+  return (
+    <Centered>
+      <p className="text-sm text-slate-700">This build is not configured.</p>
+      <p className="max-w-sm text-xs text-slate-500">{detail}</p>
+      <p className="max-w-sm text-xs text-slate-500">
+        Vite inlines these at <strong>build</strong> time. Locally: add them to{' '}
+        <code>.env</code> and restart <code>npm run dev</code> — a dev server started before the
+        file existed will not have them. On Vercel: set them, then <strong>redeploy</strong>;
+        saving a variable does not rebuild what is already live.
+      </p>
+    </Centered>
+  )
+}
+
+function NoAccess({ email, error }: { email?: string; error?: string | null }) {
   return (
     <Centered>
       <p className="text-sm text-slate-700">
-        {email ? `${email} is signed in, but has no profile in this workspace.` : 'No profile.'}
+        {error
+          ? 'Signed in, but your profile could not be loaded.'
+          : email
+            ? `${email} is signed in, but has no profile in this workspace.`
+            : 'No profile.'}
       </p>
       <p className="max-w-sm text-xs text-slate-500">
-        Ask an administrator to set one up. Authenticated is not the same as authorised.
+        {error ?? 'Ask an administrator to set one up. Authenticated is not the same as authorised.'}
       </p>
       <button
         onClick={() => supabase.auth.signOut()}
