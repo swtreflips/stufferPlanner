@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -56,6 +56,15 @@ export default function AppLayout() {
   const moveAllocation = usePlannerStore((s) => s.moveAllocation)
   const acquireLock = usePlannerStore((s) => s.acquireLock)
   const releaseLock = usePlannerStore((s) => s.releaseLock)
+  const hydrate = usePlannerStore((s) => s.hydrate)
+  const loadError = usePlannerStore((s) => s.loadError)
+
+  // Load here, not in the store creator. AppLayout mounts only after AuthProvider has both a
+  // session and a profile, so every request carries a JWT and RLS can scope it. Keyed on the
+  // user id so switching accounts refetches instead of leaving the previous person's rows.
+  useEffect(() => {
+    void hydrate()
+  }, [hydrate, user.id])
 
   // Admin + factory can upload factory CSVs (master-data edits); internal is
   // read-only on master data, no upload affordance.
@@ -141,6 +150,13 @@ export default function AppLayout() {
       onDragCancel={handleDragCancel}
     >
       <div className="h-screen w-screen flex flex-col bg-navy-50">
+        {loadError && (
+          // An empty board and a failed load look identical, and only one of them is your
+          // fault. Say which.
+          <div className="px-6 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700">
+            Could not load planner data: {loadError}
+          </div>
+        )}
         <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-navy-200">
           <img
             src={logoUrl}

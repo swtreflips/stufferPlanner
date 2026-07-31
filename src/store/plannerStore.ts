@@ -90,6 +90,13 @@ interface PlannerStore {
   locks: Record<string, LockEntry>
   mySessionId: string
 
+  // Data loading. `hydrate` must be called by a component INSIDE the auth gate — see the
+  // note on the store creator. `loadError` surfaces a failed fetch, which otherwise looks
+  // exactly like an empty board.
+  hydrated: boolean
+  loadError: string | null
+  hydrate(): Promise<void>
+
   createContainer(args: CreateContainerArgs): Promise<void>
   deleteContainer(id: string): Promise<void>
   emptyContainer(id: string): Promise<void>
@@ -152,17 +159,48 @@ interface PlannerStore {
 const presence = createPresenceChannel()
 
 export const usePlannerStore = create<PlannerStore>((set, get) => {
-  masterItemRepo.fetchAll().then((masterItems) => set({ masterItems }))
-  containerRepo.fetchAll().then((containers) => set({ containers }))
-  allocationRepo.fetchAll().then((allocations) => set({ allocations }))
-  supplierRepo.fetchAll().then((suppliers) => set({ suppliers }))
-  profileRepo.fetchAll().then((profiles) => set({ profiles }))
+  // NOTHING IS FETCHED HERE. This initializer runs when the module is first imported —
+  // at app start, before anyone has signed in. Against the local repos that was harmless:
+  // in-memory sample data, no identity involved. Against Supabase it is silently fatal.
+  // The five requests go out unauthenticated, RLS correctly returns nothing, and the board
+  // stays empty forever because a store creator runs exactly once and never retries.
+  //
+  // An empty result is not an error, which is what makes this so quiet: no exception, no
+  // failed request, no console output — a working app showing zero rows.
+  //
+  // Loading is now `hydrate()`, called from AppLayout, which only mounts once AuthProvider
+  // has a session AND a profile. Keyed on the user id, so switching accounts refetches
+  // rather than showing the previous person's rows.
 
   // Subscribe to cross-tab presence and request an initial snapshot.
   presence.subscribe((msg) => get().applyPresenceMessage(msg))
   presence.send({ type: 'snapshot-request' })
 
   return {
+    hydrated: false,
+    loadError: null,
+
+    async hydrate() {
+      // Every repo is fetched together and applied together. A partial board — PO lines
+      // without the suppliers they belong to — renders blank supplier names that read as
+      // missing data rather than a failed load.
+      try {
+        const [masterItems, containers, allocations, suppliers, profiles] = await Promise.all([
+          masterItemRepo.fetchAll(),
+          containerRepo.fetchAll(),
+          allocationRepo.fetchAll(),
+          supplierRepo.fetchAll(),
+          profileRepo.fetchAll(),
+        ])
+        set({ masterItems, containers, allocations, suppliers, profiles, hydrated: true, loadError: null })
+      } catch (e: unknown) {
+        // Surface it. The previous code used bare .then() with no .catch, so a rejected
+        // fetch produced an unhandled rejection and an empty grid — indistinguishable
+        // from "there is genuinely no work to show".
+        set({ hydrated: true, loadError: e instanceof Error ? e.message : String(e) })
+      }
+    },
+
     masterItems: [],
     containers: [],
     allocations: [],
