@@ -13,5 +13,10 @@ export function createLocalProfileRepo(): ProfileRepo {
       const found = profiles.find((p) => p.id === id)
       return found ? { ...found } : null
     },
+    // Sample data has no sibling groups — each supplier stands alone. An empty list means
+    // "no grouping", and the switcher hides itself rather than offering one dead option.
+    async fetchMyOrgIds() {
+      return []
+    },
   }
 }

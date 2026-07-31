@@ -97,6 +97,11 @@ interface PlannerStore {
   loadError: string | null
   hydrate(): Promise<void>
 
+  // Every organization the signed-in user belongs to: their own plus any sibling plant.
+  // Read from my_orgs(), the same function RLS uses, so it can never disagree with the rows
+  // that actually came back. Length > 1 is what makes a user a group user.
+  myOrgIds: string[]
+
   createContainer(args: CreateContainerArgs): Promise<void>
   deleteContainer(id: string): Promise<void>
   emptyContainer(id: string): Promise<void>
@@ -179,20 +184,29 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
   return {
     hydrated: false,
     loadError: null,
+    myOrgIds: [],
 
     async hydrate() {
       // Every repo is fetched together and applied together. A partial board — PO lines
       // without the suppliers they belong to — renders blank supplier names that read as
       // missing data rather than a failed load.
       try {
-        const [masterItems, containers, allocations, suppliers, profiles] = await Promise.all([
-          masterItemRepo.fetchAll(),
-          containerRepo.fetchAll(),
-          allocationRepo.fetchAll(),
-          supplierRepo.fetchAll(),
-          profileRepo.fetchAll(),
-        ])
-        set({ masterItems, containers, allocations, suppliers, profiles, hydrated: true, loadError: null })
+        const [masterItems, containers, allocations, suppliers, profiles, myOrgIds] =
+          await Promise.all([
+            masterItemRepo.fetchAll(),
+            containerRepo.fetchAll(),
+            allocationRepo.fetchAll(),
+            supplierRepo.fetchAll(),
+            profileRepo.fetchAll(),
+            profileRepo.fetchMyOrgIds(),
+          ])
+        // supplierFilterId resets on every hydrate. It is keyed to a user, and hydrate reruns
+        // when the user changes — carrying a previous account's focus across a sign-in would
+        // silently narrow the board to an organization the new person may not even belong to.
+        set({
+          masterItems, containers, allocations, suppliers, profiles, myOrgIds,
+          supplierFilterId: null, hydrated: true, loadError: null,
+        })
       } catch (e: unknown) {
         // Surface it. The previous code used bare .then() with no .catch, so a rejected
         // fetch produced an unhandled rejection and an empty grid — indistinguishable

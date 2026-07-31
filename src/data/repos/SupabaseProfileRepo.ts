@@ -60,6 +60,14 @@ export function createSupabaseProfileRepo(): ProfileRepo {
       )
     },
 
+    async fetchMyOrgIds() {
+      // A flat array of uuids. SECURITY DEFINER and scoped to auth.uid() internally — it
+      // takes no argument, so there is nothing a caller could pass to ask about someone else.
+      const { data, error } = await supabase.rpc('my_orgs')
+      if (error) throw new Error(`Failed to load your organizations: ${error.message}`)
+      return (data ?? []) as string[]
+    },
+
     async findById(id) {
       const { data: { session } } = await supabase.auth.getSession()
       const { data, error } = await supabase

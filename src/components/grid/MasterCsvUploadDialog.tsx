@@ -25,6 +25,7 @@ export default function MasterCsvUploadDialog() {
   const masterItems = usePlannerStore((s) => s.masterItems)
   const updateMasterCargoReady = usePlannerStore((s) => s.updateMasterCargoReady)
   const updateMasterCbmPerCase = usePlannerStore((s) => s.updateMasterCbmPerCase)
+  const myOrgIds = usePlannerStore((s) => s.myOrgIds)
   const { user } = useAuth()
 
   const [phase, setPhase] = useState<Phase>('pick')
@@ -43,9 +44,13 @@ export default function MasterCsvUploadDialog() {
     }
   }, [open])
 
-  const scopeSupplierId = useMemo(
-    () => (user.role === 'factory' ? user.supplierId : null),
-    [user],
+  // A supplier may only upload against their OWN plants — all of them. Internal is unscoped.
+  // This is a usability guard, not a security one: the write itself is bounded by RLS plus the
+  // column trigger, so a crafted row for a competitor's PO is refused by the database whatever
+  // the client passes here.
+  const scopeSupplierIds = useMemo(
+    () => (user.role === 'factory' ? myOrgIds : null),
+    [user.role, myOrgIds],
   )
 
   const onOpenChange = (next: boolean) => {
@@ -58,13 +63,13 @@ export default function MasterCsvUploadDialog() {
       const parsed = parseCsvUpload({
         csvText: text,
         masterItems,
-        scopeSupplierId,
+        scopeSupplierIds,
       })
       setFileName(file.name)
       setResult(parsed)
       setPhase('preview')
     },
-    [masterItems, scopeSupplierId],
+    [masterItems, scopeSupplierIds],
   )
 
   const handlePickInput = (e: ChangeEvent<HTMLInputElement>) => {

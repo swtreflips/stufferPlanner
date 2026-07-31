@@ -46,10 +46,17 @@ const formatCbmCell = (params: { value: unknown }): string =>
 // Cargo Ready + CBM per Case are factory-owned master-data fields. Admin can
 // edit any row; factories edit own-supplier rows only; internal is read-only
 // (they own planning, not master data).
-function canEditRow(item: MasterItem | undefined, user: Profile): boolean {
+function canEditRow(
+  item: MasterItem | undefined,
+  user: Profile,
+  myOrgIds: string[],
+): boolean {
   if (!item) return false
   if (user.role === 'admin') return true
-  if (user.role === 'factory') return item.supplierId === user.supplierId
+  // Any plant the user belongs to, not just their primary organization. A Junsun Thailand
+  // login is the same people as Qingdao — checking user.supplierId alone made a sibling's
+  // rows visible but read-only, which looks like a broken grid rather than a rule.
+  if (user.role === 'factory') return myOrgIds.includes(item.supplierId)
   return false
 }
 
@@ -68,21 +75,24 @@ export default function OpenPoStatusReport() {
   const updateMasterCbmPerCase = usePlannerStore((s) => s.updateMasterCbmPerCase)
   const recentlySavedKey = usePlannerStore((s) => s.recentlySavedKey)
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
+  const myOrgIds = usePlannerStore((s) => s.myOrgIds)
   const { user } = useAuth()
 
-  // Hide fully-committed rows; for factory users, also restrict to their
-  // supplier; for admin/internal, honor the optional supplier focus filter.
+  // Hide fully-committed rows, then honor the supplier focus filter — for EVERY role.
+  //
+  // This used to pin factory users to `user.supplierId`, which was wrong once sibling plants
+  // existed: a Junsun Thailand user is entitled to Qingdao's rows too, RLS returns all 34, and
+  // the client then threw 9 of them away. The scoping is the database's job, and it already
+  // does it — my_orgs() covers own-org plus siblings. Re-applying a narrower rule here did not
+  // add safety, it subtracted data the user is allowed to see, invisibly.
   const visibleRows = useMemo(
     () =>
       masterItems.filter((m) => {
         if (m.committedQuantity >= m.originalQuantity) return false
-        if (user.role === 'factory' && user.supplierId) {
-          return m.supplierId === user.supplierId
-        }
         if (supplierFilterId) return m.supplierId === supplierFilterId
         return true
       }),
-    [masterItems, user.role, user.supplierId, supplierFilterId],
+    [masterItems, supplierFilterId],
   )
 
   const gridApiRef = useRef<GridApi<MasterItem> | null>(null)
@@ -151,12 +161,12 @@ export default function OpenPoStatusReport() {
         type: 'numericColumn',
         valueFormatter: formatCbmCell,
         editable: (params: EditableCallbackParams<MasterItem>) =>
-          canEditRow(params.data, user),
+          canEditRow(params.data, user, myOrgIds),
         cellEditor: 'agNumberCellEditor',
         cellEditorParams: { precision: 4, min: 0 },
         cellClass: (params) => {
           const classes: string[] = []
-          if (canEditRow(params.data, user)) classes.push('bg-amber-accent/[0.04]')
+          if (canEditRow(params.data, user, myOrgIds)) classes.push('bg-amber-accent/[0.04]')
           if (
             params.data &&
             params.colDef.field &&
@@ -180,12 +190,12 @@ export default function OpenPoStatusReport() {
         width: 130,
         valueFormatter: formatDateCell,
         editable: (params: EditableCallbackParams<MasterItem>) =>
-          canEditRow(params.data, user),
+          canEditRow(params.data, user, myOrgIds),
         cellEditor: DateCellEditor,
         cellEditorPopup: true,
         cellClass: (params) => {
           const classes: string[] = []
-          if (canEditRow(params.data, user)) classes.push('bg-amber-accent/[0.04]')
+          if (canEditRow(params.data, user, myOrgIds)) classes.push('bg-amber-accent/[0.04]')
           if (
             params.data &&
             params.colDef.field &&
@@ -197,7 +207,7 @@ export default function OpenPoStatusReport() {
         },
       },
     ],
-    [availableQty, user, recentlySavedKey],
+    [availableQty, user, myOrgIds, recentlySavedKey],
   )
 
   const defaultColDef = useMemo<ColDef>(

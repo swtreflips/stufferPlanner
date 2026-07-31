@@ -24,6 +24,18 @@ export interface SupplierRepo {
 export interface ProfileRepo {
   fetchAll(): Promise<Profile[]>
   findById(id: string): Promise<Profile | null>
+
+  /**
+   * Every organization the signed-in user belongs to — their own, plus any sibling plant
+   * sharing a group. Junsun Thailand and Qingdao Junsun are one commercial relationship run
+   * out of two factories, so a Junsun user is entitled to both.
+   *
+   * Read from my_orgs(), which is the SAME function the RLS policies use. That is the point:
+   * the switcher can never offer an organization whose rows the database would refuse, nor
+   * hide one whose rows it returns. Deriving the list from the loaded data instead would
+   * silently drop a sibling that happens to have no open POs this week.
+   */
+  fetchMyOrgIds(): Promise<string[]>
 }
 
 export interface CreateContainerInput {

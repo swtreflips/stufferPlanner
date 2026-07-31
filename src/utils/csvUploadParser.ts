@@ -8,9 +8,14 @@ import type { MasterItem } from '../types/masterItem'
 export interface CsvUploadInput {
   csvText: string
   masterItems: MasterItem[]
-  // Optional supplier filter: if set, rows whose matched master item's
-  // supplierId !== this value land in `skippedOtherSupplier`.
-  scopeSupplierId?: string | null
+  // Optional supplier scope: if non-empty, rows whose matched master item belongs to a
+  // supplier outside this set land in `skippedOtherSupplier`.
+  //
+  // A SET, not a single id, because one login can legitimately cover several plants — Junsun
+  // Thailand and Qingdao Junsun are one relationship. When it was a single id, a Junsun user
+  // uploading a workbook covering both plants silently had half their rows skipped and
+  // reported back as "other supplier", which is not what happened.
+  scopeSupplierIds?: string[] | null
 }
 
 export interface MatchedRow {
@@ -94,7 +99,7 @@ export function parseCsvUpload(input: CsvUploadInput): CsvUploadResult {
       continue
     }
 
-    if (input.scopeSupplierId && item.supplierId !== input.scopeSupplierId) {
+    if (input.scopeSupplierIds?.length && !input.scopeSupplierIds.includes(item.supplierId)) {
       skippedOtherSupplier += 1
       continue
     }

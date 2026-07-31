@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import type { Container } from '../../types/container'
-import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import ContainerCard from './ContainerCard'
 import AddContainerDialog from './AddContainerDialog'
@@ -18,27 +17,27 @@ export default function ContainerTray() {
   const containers = usePlannerStore((s) => s.containers)
   const suppliers = usePlannerStore((s) => s.suppliers)
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
-  const { user } = useAuth()
 
-  const isFactory = user.role === 'factory' && user.supplierId !== null
-  const factorySupplierId = user.supplierId
-
+  // Containers and drafts follow the same focus filter as the grid, for every role. The old
+  // code pinned factory users to their own supplierId, which hid a sibling plant's drafts from
+  // someone entitled to see them — see the note in OpenPoStatusReport. RLS scopes the rows;
+  // this only decides which of those the user is currently looking at.
   const { committed, drafts } = useMemo(() => {
-    const scoped = isFactory
-      ? containers.filter((c) => c.supplierId === factorySupplierId)
-      : supplierFilterId
-        ? containers.filter((c) => c.supplierId === supplierFilterId)
-        : containers
+    const scoped = supplierFilterId
+      ? containers.filter((c) => c.supplierId === supplierFilterId)
+      : containers
     const sorted = [...scoped].sort((a, b) => a.displayOrder - b.displayOrder)
     return {
       committed: sorted.filter((c) => c.status === 'committed'),
       drafts: sorted.filter((c) => c.status === 'draft'),
     }
-  }, [containers, isFactory, factorySupplierId, supplierFilterId])
+  }, [containers, supplierFilterId])
 
-  // For admin/internal we cluster by supplier inside each section, with small
-  // labels between groups. Factory view skips this since they only see their
-  // own supplier.
+  // Cluster by supplier inside each section, with small labels between groups. This used to be
+  // "admin/internal only", on the assumption that a factory sees exactly one supplier. Junsun
+  // breaks that: two plants, one login. The label is now driven by the DATA — shown whenever
+  // the visible set spans more than one supplier — so a Junsun user can tell Thailand from
+  // Qingdao, and a single-plant factory is unchanged.
   const groupBySupplier = (list: Container[]): SupplierGroup[] => {
     const bySupplier = new Map<string, Container[]>()
     for (const c of list) {
@@ -57,7 +56,7 @@ export default function ContainerTray() {
   }
 
   const renderGroups = (list: Container[]) => {
-    if (isFactory) {
+    if (new Set(list.map((c) => c.supplierId)).size <= 1) {
       return list.map((c) => <ContainerCard key={c.id} container={c} />)
     }
     return groupBySupplier(list).map((group) => (

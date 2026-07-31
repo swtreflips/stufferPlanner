@@ -18,13 +18,28 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
   const suppliers = usePlannerStore((s) => s.suppliers)
   const containerCodeSequences = usePlannerStore((s) => s.containerCodeSequences)
   const createContainer = usePlannerStore((s) => s.createContainer)
+  const myOrgIds = usePlannerStore((s) => s.myOrgIds)
+  const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const { user } = useAuth()
 
-  // Factory users are locked to their own supplier. Internal/admin pick from the dropdown.
-  const isFactory = user.role === 'factory' && user.supplierId !== null
+  // WHICH SUPPLIERS THIS USER MAY BUILD FOR.
+  //
+  // Internal picks from the whole directory. A supplier picks from their own organizations —
+  // usually exactly one, in which case the control is hidden and the choice is implicit. A
+  // group supplier like Junsun has two plants and MUST choose: a container built under
+  // Thailand cannot hold Qingdao's lines, and silently defaulting to the primary org would
+  // produce drafts that reject half the rows on screen with no explanation.
+  const isInternal = user.role === 'internal' || user.role === 'admin'
+  const myOrgs = useMemo(
+    () => (isInternal ? suppliers : suppliers.filter((s) => myOrgIds.includes(s.id))),
+    [isInternal, suppliers, myOrgIds],
+  )
+  const lockedSupplierId = myOrgs.length === 1 ? myOrgs[0].id : null
 
+  // Open on whatever plant the board is focused on, so "switch to Qingdao, add a container"
+  // does the obvious thing without a second selection.
   const [supplierId, setSupplierId] = useState<string>(
-    isFactory ? user.supplierId ?? '' : suppliers[0]?.id ?? '',
+    lockedSupplierId ?? supplierFilterId ?? myOrgs[0]?.id ?? '',
   )
 
   // Destinations the picker offers are the union of destinations present in the
@@ -50,15 +65,17 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
   useEffect(() => {
     if (!open) return
     setName(defaultName)
-    if (isFactory) {
-      setSupplierId(user.supplierId ?? '')
+    if (lockedSupplierId) {
+      setSupplierId(lockedSupplierId)
     } else {
       setSupplierId((prev) =>
-        prev && suppliers.some((s) => s.id === prev) ? prev : suppliers[0]?.id ?? '',
+        prev && myOrgs.some((s) => s.id === prev)
+          ? prev
+          : supplierFilterId ?? myOrgs[0]?.id ?? '',
       )
     }
     setType('40HC')
-  }, [open, defaultName, suppliers, isFactory, user.supplierId])
+  }, [open, defaultName, myOrgs, lockedSupplierId, supplierFilterId])
 
   // When supplier changes (or on open), make sure the destination dropdown
   // shows a value valid for that supplier.
@@ -132,16 +149,16 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
                 autoFocus
               />
             </Field>
-            {/* Factory users are implicitly bound to their own supplier — no
-                control shown. Internal/admin pick from the dropdown. */}
-            {isFactory ? null : (
+            {/* Hidden when there is only one possible answer — a single-plant supplier is
+                bound implicitly. Shown to internal, and to group suppliers with two plants. */}
+            {lockedSupplierId ? null : (
               <Field label="Supplier">
                 <select
                   value={supplierId}
                   onChange={(e) => setSupplierId(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent"
                 >
-                  {suppliers.map((s) => (
+                  {myOrgs.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.code} · {s.name}
                     </option>
