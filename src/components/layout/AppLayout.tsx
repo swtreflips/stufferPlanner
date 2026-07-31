@@ -9,6 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
+import AccountMenu from './AccountMenu'
 import SplitPane from './SplitPane'
 import SupplierFilter from './SupplierFilter'
 import logoUrl from '../../assets/logo.png'
@@ -178,12 +179,10 @@ export default function AppLayout() {
             <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-navy-800 text-navy-300 border border-navy-700">
               {openPoCount} open POs
             </span>
-            <div className="flex flex-col items-end">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
-                {user.role}
-                {user.supplierName ? ` · ${user.supplierName}` : ''}
-              </span>
-            </div>
+            <span className="mx-1 hidden h-6 w-px bg-navy-200 sm:block" />
+            {/* Replaces a bare role caption. Same identity, but now it is somewhere to sign out
+                from — which the app had no way to do at all. */}
+            <AccountMenu />
           </div>
         </header>
         <SplitPane
