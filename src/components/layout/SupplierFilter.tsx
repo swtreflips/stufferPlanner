@@ -10,13 +10,18 @@ import { usePlannerStore } from '../../store/plannerStore'
  *
  * TWO AUDIENCES, one piece of state:
  *
- *   internal / admin   a dropdown over every supplier. Long list, default "All".
- *   group suppliers    a segmented switch over their OWN plants only. Junsun Thailand and
+ *   internal / admin   a dropdown over every supplier, plus "All suppliers" — they also keep
+ *                      the grid's supplier column, so "all" stays readable.
+ *   group suppliers    a dropdown over their OWN plants, with NO "all". Junsun Thailand and
  *                      Qingdao Junsun are one relationship run out of two factories, and a
- *                      Junsun user is entitled to both. Two or three options, worth the width.
+ *                      Junsun user is entitled to both — one at a time.
  *
- * A single-plant supplier sees nothing here: one option plus an "All" that means the same
- * thing is furniture.
+ * A single-plant supplier sees nothing here: with one organization there is nothing to choose.
+ *
+ * THE ASYMMETRY IS THE DESIGN. External users no longer get a supplier column in the grid, so
+ * for them this control is not a filter narrowing a labelled list — it IS the label. That only
+ * works while exactly one plant is selected, which is why "all" exists for internal and not for
+ * them.
  *
  * This control NARROWS what is already on screen. It is not a permission — every row it can
  * reveal was returned by the database for this session, scoped by my_orgs(). The options come
@@ -39,32 +44,38 @@ export default function SupplierFilter() {
   )
 
   if (!isInternal) {
+    // One plant, nothing to choose. The account menu already names their company, and with only
+    // one organization every row on screen belongs to it by definition.
     if (myOrgs.length < 2) return null
+
+    /*
+      NO "ALL PLANTS" OPTION, and that is the point rather than an omission.
+
+      The grid no longer carries a supplier column for external users — it was redundant when
+      every row belonged to the one company you work for. For a multi-plant supplier that only
+      holds if exactly one plant is selected: "all plants" would show Junsun 34 rows with nothing
+      distinguishing Thailand from Qingdao. This dropdown IS the attribution now, so it always
+      names one plant, and everything visible belongs to it.
+
+      Switching is how you compare, rather than reading a column.
+    */
     return (
       <div className="flex items-center gap-2">
         <span className="font-mono text-[10px] uppercase tracking-widest text-navy-400">
           Plant
         </span>
-        <div
-          role="group"
-          aria-label="Switch plant"
-          className="flex items-center rounded-lg border border-navy-200 bg-navy-50 p-0.5"
+        <select
+          aria-label="Plant"
+          value={supplierFilterId ?? myOrgs[0].id}
+          onChange={(e) => setSupplierFilter(e.target.value)}
+          className="px-3 py-1.5 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent"
         >
-          <PlantButton
-            label="All"
-            active={supplierFilterId === null}
-            onClick={() => setSupplierFilter(null)}
-          />
           {myOrgs.map((s) => (
-            <PlantButton
-              key={s.id}
-              label={s.code || s.name}
-              title={s.name}
-              active={supplierFilterId === s.id}
-              onClick={() => setSupplierFilter(s.id)}
-            />
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
           ))}
-        </div>
+        </select>
       </div>
     )
   }
@@ -89,30 +100,3 @@ export default function SupplierFilter() {
   )
 }
 
-function PlantButton({
-  label,
-  title,
-  active,
-  onClick,
-}: {
-  label: string
-  title?: string
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-pressed={active}
-      className={`px-2.5 py-1 rounded font-mono text-[10px] uppercase tracking-widest transition-colors ${
-        active
-          ? 'bg-navy-900 text-navy-50'
-          : 'text-navy-500 hover:bg-navy-100 hover:text-navy-900'
-      }`}
-    >
-      {label}
-    </button>
-  )
-}

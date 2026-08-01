@@ -64,8 +64,8 @@ export default function AppLayout() {
   // session and a profile, so every request carries a JWT and RLS can scope it. Keyed on the
   // user id so switching accounts refetches instead of leaving the previous person's rows.
   useEffect(() => {
-    void hydrate()
-  }, [hydrate, user.id])
+    void hydrate(user)
+  }, [hydrate, user])
 
   // Admin + factory can upload factory CSVs (master-data edits); internal is
   // read-only on master data, no upload affordance.

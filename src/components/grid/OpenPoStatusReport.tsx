@@ -89,6 +89,7 @@ export default function OpenPoStatusReport() {
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const myOrgIds = usePlannerStore((s) => s.myOrgIds)
   const { user } = useAuth()
+  const isInternal = user.role === 'internal' || user.role === 'admin'
 
   // Hide fully-committed rows, then honor the supplier focus filter — for EVERY role.
   //
@@ -140,7 +141,16 @@ export default function OpenPoStatusReport() {
           params.data ? <DraggableRowHandle masterItem={params.data} /> : null,
         cellStyle: { padding: 0 },
       },
-      { field: 'name', headerName: 'Name', width: 180, filter: SetFilter },
+      /*
+        The supplier column is INTERNAL-ONLY. Internal spans eighteen suppliers, so the name is
+        the first thing they need. An external user works for one company and — because the plant
+        dropdown always names a single plant — every row on their screen already belongs to a
+        known organization. The column repeated that on all 25 rows and cost 180px of a dense
+        grid to do it.
+      */
+      ...(isInternal
+        ? [{ field: 'name', headerName: 'Name', width: 180, filter: SetFilter } as ColDef<MasterItem>]
+        : []),
       { field: 'documentNumber', headerName: 'Document Number', width: 150 },
       { field: 'shipTo', headerName: 'Ship To', width: 150, filter: SetFilter },
       { field: 'sku', headerName: 'Item', width: 170, filter: SetFilter },
@@ -219,7 +229,7 @@ export default function OpenPoStatusReport() {
         },
       },
     ],
-    [availableQty, user, myOrgIds, recentlySavedKey],
+    [availableQty, user, myOrgIds, recentlySavedKey, isInternal],
   )
 
   const defaultColDef = useMemo<ColDef>(

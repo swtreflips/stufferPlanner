@@ -95,7 +95,7 @@ interface PlannerStore {
   // exactly like an empty board.
   hydrated: boolean
   loadError: string | null
-  hydrate(): Promise<void>
+  hydrate(user: Profile): Promise<void>
 
   // Every organization the signed-in user belongs to: their own plus any sibling plant.
   // Read from my_orgs(), the same function RLS uses, so it can never disagree with the rows
@@ -182,7 +182,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     loadError: null,
     myOrgIds: [],
 
-    async hydrate() {
+    async hydrate(user: Profile) {
       // Every repo is fetched together and applied together. A partial board — PO lines
       // without the suppliers they belong to — renders blank supplier names that read as
       // missing data rather than a failed load.
@@ -196,12 +196,21 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
             profileRepo.fetchAll(),
             profileRepo.fetchMyOrgIds(),
           ])
-        // supplierFilterId resets on every hydrate. It is keyed to a user, and hydrate reruns
-        // when the user changes — carrying a previous account's focus across a sign-in would
-        // silently narrow the board to an organization the new person may not even belong to.
+        /*
+          supplierFilterId is seeded here, and it resets on every hydrate — hydrate reruns when
+          the user changes, and carrying a previous account's focus across a sign-in would
+          silently narrow the board to an organization the new person may not belong to.
+
+          AN EXTERNAL USER ALWAYS HAS EXACTLY ONE PLANT SELECTED. The grid no longer carries a
+          supplier column, so "all plants" would show a multi-plant supplier 34 rows with nothing
+          saying which are Thailand and which are Qingdao. The dropdown IS the attribution, which
+          only works if it always names one plant. Internal keeps null — they have the column.
+        */
+        const isExternal = user.role === 'factory'
         set({
           masterItems, containers, allocations, suppliers, profiles, myOrgIds,
-          supplierFilterId: null, hydrated: true, loadError: null,
+          supplierFilterId: isExternal ? (user.supplierId ?? myOrgIds[0] ?? null) : null,
+          hydrated: true, loadError: null,
         })
       } catch (e: unknown) {
         // Surface it. The previous code used bare .then() with no .catch, so a rejected
