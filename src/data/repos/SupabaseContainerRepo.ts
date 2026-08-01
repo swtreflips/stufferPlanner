@@ -7,23 +7,21 @@ import type {
   ContainerType,
   LogisticsStatus,
 } from '../../types/container'
-import type { ContainerRepo, CreateContainerInput, LogisticsPatch } from './types'
+import type { ContainerRepo, CreateContainerInput } from './types'
 
 /**
  * Containers, in `planner_containers`.
  *
  * Until this existed, containers resolved to the in-memory local repo whatever VITE_DATA_SOURCE
  * said, so a draft lived in a JavaScript object inside one browser tab. It survived navigation
- * within the SPA and nothing else — no refresh, no second tab, no colleague, no tomorrow. The
- * work looked saved because the UI kept rendering it.
+ * within the SPA and nothing else. The work looked saved because the UI kept rendering it.
  *
- * RLS decides everything about who may touch what, and it is already exact:
+ * RLS decides who may touch what, and nothing here re-checks it:
  *   read    internal sees all; a supplier sees its own organizations, siblings included
- *   insert  a supplier may only create DRAFTS, and never pre-committed
- *   update  a supplier may only modify a container while it is still a draft
+ *   insert  a supplier may create DRAFTS only, never pre-committed
+ *   update  a supplier may modify a container only while it is a draft
  *   delete  same
- * There is deliberately no client-side check mirroring any of that. A duplicated rule is a rule
- * free to drift, and the database is the one that actually holds.
+ * A duplicated rule is a rule free to drift, and the database is the one that actually holds.
  */
 
 interface Row {
@@ -83,21 +81,25 @@ function toContainer(r: Row): Container {
   }
 }
 
-const fail = (what: string, e: { message: string }) => {
+const fail = (what: string, e: { message: string }): never => {
   throw new Error(`${what}: ${e.message}`)
 }
 
-// Module-level, not a method: the commit RPCs return void, so the caller still needs the new
-// row. Reaching it through `this` would only work while these are invoked off the repo object,
-// and would fail silently the day someone destructures a method out of it.
-async function fetchOne(id: string): Promise<Container> {
-  const { data, error } = await supabase
-    .from('planner_containers')
-    .select(SELECT)
-    .eq('id', id)
-    .single()
-  if (error) fail('Failed to reload container', error)
-  return toContainer(data as unknown as Row)
+/*
+  Every lifecycle transition is one SECURITY DEFINER function, and they all return the updated
+  row — so a single helper covers all nine.
+
+  Module-level rather than a method on the returned object: `this` only binds while a method is
+  called off that object, so `const { book } = containerRepo` would break it at runtime with
+  nothing at compile time to catch it.
+*/
+async function rpc(fn: string, args: Record<string, unknown>, verb: string): Promise<Container> {
+  const { data, error } = await supabase.rpc(fn, args)
+  // A refused transition raises inside the function, so it arrives here as `error` carrying the
+  // reason the database gave — "container X is not booked" rather than a silent no-op.
+  if (error) fail(`Failed to ${verb} container`, error)
+  if (!data) throw new Error(`Failed to ${verb} container: no row returned`)
+  return toContainer((Array.isArray(data) ? data[0] : data) as Row)
 }
 
 export function createSupabaseContainerRepo(): ContainerRepo {
@@ -113,8 +115,8 @@ export function createSupabaseContainerRepo(): ContainerRepo {
     },
 
     async create(input: CreateContainerInput) {
-      // display_order is assigned here rather than by the caller when omitted, so two people
-      // adding a container at once cannot both claim the same slot from a stale local count.
+      // display_order is assigned here when omitted, so two people adding a container at once
+      // cannot both claim the same slot from a stale local count.
       let displayOrder = input.displayOrder
       if (displayOrder === undefined) {
         const { count } = await supabase
@@ -142,8 +144,8 @@ export function createSupabaseContainerRepo(): ContainerRepo {
     },
 
     async delete(id) {
-      // Allocations cascade at the database level. Deleting them here first would leave orphans
-      // behind whenever the container delete is then refused by RLS.
+      // Allocations cascade in the database. Deleting them here first would orphan them whenever
+      // the container delete is then refused by RLS.
       const { error } = await supabase.from('planner_containers').delete().eq('id', id)
       if (error) fail('Failed to delete container', error)
     },
@@ -160,51 +162,38 @@ export function createSupabaseContainerRepo(): ContainerRepo {
     },
 
     /*
-      Commit and uncommit go through SECURITY DEFINER functions, not an UPDATE.
+      THE LIFECYCLE. Nine named transitions, no generic patch, and no actor id anywhere.
 
-      Two reasons. The identity stamp is taken from auth.uid() server-side, so it records who
-      actually did it rather than whoever the client claimed. And RLS forbids a supplier from
-      updating a committed container at all — which is correct, and which also means the
-      transition itself cannot be an ordinary update, since the row is locked the instant its
-      status changes. `committedBy` is accepted for interface compatibility and ignored.
+      Identity comes from auth.uid() inside each function, so booked_by / scheduled_by /
+      shipped_by record who acted rather than what the browser claimed. Passing it from the
+      client made those columns forgeable, and wrong by accident the first time a stale id got
+      through.
+
+      Each function also carries its own source-state guard — book only from committed, ship only
+      from scheduled — so the sequence is enforced in the one place that cannot be bypassed,
+      rather than by a check in the store the database knew nothing about.
     */
-    async commit(id, ofqReference) {
-      const { error } = await supabase.rpc('commit_container', {
-        p_container_id: id,
-        p_ofq_reference: ofqReference,
-      })
-      if (error) fail('Failed to commit container', error)
-      return fetchOne(id)
-    },
+    commit: (id, ofqReference) =>
+      rpc('commit_container', { p_container_id: id, p_ofq_reference: ofqReference }, 'commit'),
 
-    async uncommit(id) {
-      const { error } = await supabase.rpc('uncommit_container', { p_container_id: id })
-      if (error) fail('Failed to uncommit container', error)
-      return fetchOne(id)
-    },
+    uncommit: (id) => rpc('uncommit_container', { p_container_id: id }, 'uncommit'),
 
-    async updateLogistics(id, patch: LogisticsPatch) {
-      const row: Record<string, unknown> = {}
-      // Only keys actually present are sent. Spreading the whole patch would write null over
-      // fields the caller never mentioned — un-booking a container by editing its schedule.
-      if ('logisticsStatus' in patch) row.logistics_status = patch.logisticsStatus
-      if ('bookedAt' in patch) row.booked_at = patch.bookedAt
-      if ('bookedBy' in patch) row.booked_by = patch.bookedBy
-      if ('booking' in patch) row.booking = patch.booking
-      if ('schedule' in patch) row.schedule = patch.schedule
-      if ('scheduledAt' in patch) row.scheduled_at = patch.scheduledAt
-      if ('scheduledBy' in patch) row.scheduled_by = patch.scheduledBy
-      if ('shippedAt' in patch) row.shipped_at = patch.shippedAt
-      if ('shippedBy' in patch) row.shipped_by = patch.shippedBy
+    book: (id, booking) =>
+      rpc('book_container', { p_container_id: id, p_booking: booking }, 'book'),
 
-      const { data, error } = await supabase
-        .from('planner_containers')
-        .update(row)
-        .eq('id', id)
-        .select(SELECT)
-        .single()
-      if (error) fail('Failed to update logistics', error)
-      return toContainer(data as unknown as Row)
-    },
+    unbook: (id) => rpc('unbook_container', { p_container_id: id }, 'un-book'),
+
+    reviseBooking: (id, booking) =>
+      rpc('revise_container_booking', { p_container_id: id, p_booking: booking },
+          'revise the booking of'),
+
+    schedule: (id, schedule) =>
+      rpc('schedule_container', { p_container_id: id, p_schedule: schedule }, 'schedule'),
+
+    unschedule: (id) => rpc('unschedule_container', { p_container_id: id }, 'un-schedule'),
+
+    ship: (id) => rpc('ship_container', { p_container_id: id }, 'mark shipped'),
+
+    unship: (id) => rpc('unship_container', { p_container_id: id }, 'un-ship'),
   }
 }

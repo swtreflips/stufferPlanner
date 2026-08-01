@@ -117,22 +117,18 @@ interface PlannerStore {
   updateMasterCbmPerCase(id: string, value: number): Promise<void>
   markSaved(key: string): void
 
-  commitContainer(id: string, ofqReference: string, committedBy: string): Promise<void>
+  commitContainer(id: string, ofqReference: string): Promise<void>
   uncommitContainer(id: string): Promise<void>
 
-  // Post-commit lifecycle. Each action enforces the source status itself; the
-  // dialog wires them to its buttons. *By stamps come from the caller (the
-  // current useAuth profile id); Phase 12 swaps to auth.uid() server-side.
-  markContainerBooked(id: string, booking: ContainerBooking, actorId: string): Promise<void>
+  // Post-commit lifecycle. Each maps to one SECURITY DEFINER function that guards its own
+  // source state and stamps auth.uid() itself — so neither the sequence nor the identity is
+  // decided by the client. A refused transition throws with the database's reason.
+  markContainerBooked(id: string, booking: ContainerBooking): Promise<void>
   updateContainerBooking(id: string, booking: ContainerBooking): Promise<void>
   unmarkContainerBooked(id: string): Promise<void>
-  setContainerSchedule(
-    id: string,
-    schedule: ContainerSchedule,
-    actorId: string,
-  ): Promise<void>
+  setContainerSchedule(id: string, schedule: ContainerSchedule): Promise<void>
   clearContainerSchedule(id: string): Promise<void>
-  markContainerShipped(id: string, actorId: string): Promise<void>
+  markContainerShipped(id: string): Promise<void>
   unmarkContainerShipped(id: string): Promise<void>
 
   openAllocationDialog(mode: AllocationDialogMode): void
@@ -345,7 +341,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       set((s) => ({ allocations: s.allocations.filter((a) => a.id !== id) }))
     },
 
-    async commitContainer(id, ofqReference, committedBy) {
+    async commitContainer(id, ofqReference) {
       const container = get().containers.find((c) => c.id === id)
       if (!container || container.status !== 'draft') return
       const containerAllocations = get().allocations.filter(
@@ -353,7 +349,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       )
       if (containerAllocations.length === 0) return
 
-      const committed = await containerRepo.commit(id, ofqReference, committedBy)
+      const committed = await containerRepo.commit(id, ofqReference)
 
       // Update master committedQuantity (in-memory + repo).
       const deltas: Record<string, number> = {}
@@ -377,11 +373,9 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     async uncommitContainer(id) {
       const container = get().containers.find((c) => c.id === id)
       if (!container || container.status !== 'committed') return
-      // Uncommit only from the 'committed' stage — once a container is booked,
-      // scheduled, or shipped, the operational state has to be rolled back
-      // explicitly via the Logistics dialog first. Keeps the app in sync with
-      // reality (you can't un-book a real booking with a button click).
-      if (container.logisticsStatus && container.logisticsStatus !== 'committed') return
+      // "Roll the logistics back before uncommitting" is enforced by uncommit_container now,
+      // not here — it guards the most destructive action in the app, and a rule the client alone
+      // believes is a rule a direct API call ignores.
       const containerAllocations = get().allocations.filter(
         (a) => a.containerId === id,
       )
@@ -460,105 +454,70 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       }, 1200)
     },
 
-    async markContainerBooked(id, booking, actorId) {
-      const container = get().containers.find((c) => c.id === id)
-      if (!container || container.logisticsStatus !== 'committed') return
-      const updated = await containerRepo.updateLogistics(id, {
-        logisticsStatus: 'booked',
-        booking,
-        bookedAt: new Date().toISOString(),
-        bookedBy: actorId,
-      })
+    /*
+      The lifecycle no longer guards itself here, and no longer passes an actor id.
+
+      Both used to live in this store: `if (logisticsStatus !== 'committed') return` was the
+      state machine, and `actorId` was the identity written to booked_by. The first was a
+      business rule in React that the database knew nothing about — nothing stopped a container
+      jumping from committed straight to shipped. The second meant the column recorded what the
+      browser claimed rather than who acted.
+
+      Each repo method now maps to one SECURITY DEFINER function that guards its own source
+      state and stamps auth.uid() itself. A refused transition throws with the reason, so the
+      caller finds out rather than silently no-op'ing — which is what `return` did here.
+    */
+    async markContainerBooked(id, booking) {
+      const updated = await containerRepo.book(id, booking)
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))
     },
 
+    // Revising details without moving the container. booked_at / booked_by are untouched: they
+    // record who booked it, and a later correction does not change that fact.
     async updateContainerBooking(id, booking) {
-      const container = get().containers.find((c) => c.id === id)
-      if (!container) return
-      // Revise booking details without changing status or stamps. Allowed once
-      // the container carries a booking (booked or later); a no-op on a draft or
-      // freshly-committed container that hasn't been booked yet.
-      if (!container.logisticsStatus || container.logisticsStatus === 'committed') return
-      const updated = await containerRepo.updateLogistics(id, { booking })
+      const updated = await containerRepo.reviseBooking(id, booking)
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))
     },
 
     async unmarkContainerBooked(id) {
-      const container = get().containers.find((c) => c.id === id)
-      if (!container || container.logisticsStatus !== 'booked') return
-      const updated = await containerRepo.updateLogistics(id, {
-        logisticsStatus: 'committed',
-        booking: null,
-        bookedAt: null,
-        bookedBy: null,
-      })
+      const updated = await containerRepo.unbook(id)
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))
     },
 
-    async setContainerSchedule(id, schedule, actorId) {
-      const container = get().containers.find((c) => c.id === id)
-      if (!container) return
-      // Allow from booked (advance to scheduled), or while already scheduled /
-      // shipped (revision — forwarders revise ETD/ETA). On the advance path we
-      // stamp scheduledAt/By; revisions leave those alone (first scheduler).
-      if (container.logisticsStatus === 'committed' || container.logisticsStatus === null) return
-      const advancing = container.logisticsStatus === 'booked'
-      const updated = await containerRepo.updateLogistics(id, {
-        schedule,
-        ...(advancing
-          ? {
-              logisticsStatus: 'scheduled' as const,
-              scheduledAt: new Date().toISOString(),
-              scheduledBy: actorId,
-            }
-          : {}),
-      })
+    // Advance from booked, or revise an existing schedule. Which of the two it is is decided by
+    // the database from the container's current state, not guessed here — forwarders revise ETD
+    // and ETA routinely, and a revision must not overwrite who scheduled it first.
+    async setContainerSchedule(id, schedule) {
+      const updated = await containerRepo.schedule(id, schedule)
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))
     },
 
     async clearContainerSchedule(id) {
-      const container = get().containers.find((c) => c.id === id)
-      if (!container || container.logisticsStatus !== 'scheduled') return
-      const updated = await containerRepo.updateLogistics(id, {
-        logisticsStatus: 'booked',
-        schedule: null,
-        scheduledAt: null,
-        scheduledBy: null,
-      })
+      const updated = await containerRepo.unschedule(id)
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))
     },
 
-    async markContainerShipped(id, actorId) {
-      const container = get().containers.find((c) => c.id === id)
-      if (!container || container.logisticsStatus !== 'scheduled') return
-      const updated = await containerRepo.updateLogistics(id, {
-        logisticsStatus: 'shipped',
-        shippedAt: new Date().toISOString(),
-        shippedBy: actorId,
-      })
+    async markContainerShipped(id) {
+      const updated = await containerRepo.ship(id)
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))
     },
 
+    // The schedule survives — un-shipping says the sailing has not happened, not that the
+    // routing was wrong.
     async unmarkContainerShipped(id) {
-      const container = get().containers.find((c) => c.id === id)
-      if (!container || container.logisticsStatus !== 'shipped') return
-      const updated = await containerRepo.updateLogistics(id, {
-        logisticsStatus: 'scheduled',
-        shippedAt: null,
-        shippedBy: null,
-      })
+      const updated = await containerRepo.unship(id)
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? updated : c)),
       }))

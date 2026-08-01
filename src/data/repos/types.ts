@@ -4,7 +4,6 @@ import type {
   ContainerBooking,
   ContainerSchedule,
   ContainerType,
-  LogisticsStatus,
 } from '../../types/container'
 import type { Allocation } from '../../types/allocation'
 import type { Supplier } from '../../types/supplier'
@@ -48,26 +47,34 @@ export interface CreateContainerInput {
   displayOrder?: number
 }
 
-export interface LogisticsPatch {
-  logisticsStatus?: LogisticsStatus | null
-  bookedAt?: string | null
-  bookedBy?: string | null
-  booking?: ContainerBooking | null
-  schedule?: ContainerSchedule | null
-  scheduledAt?: string | null
-  scheduledBy?: string | null
-  shippedAt?: string | null
-  shippedBy?: string | null
-}
-
 export interface ContainerRepo {
   fetchAll(): Promise<Container[]>
   create(input: CreateContainerInput): Promise<Container>
   delete(id: string): Promise<void>
   updateCapacity(id: string, capacityCbm: number): Promise<Container>
-  commit(id: string, ofqReference: string, committedBy: string): Promise<Container>
+
+  /*
+    The lifecycle is named transitions, not a generic patch.
+
+    `updateLogistics(id, patch)` let a caller write any combination of status and stamps, which
+    meant the state machine had to live in the store — `if (logisticsStatus !== 'committed')
+    return` — a business rule in React that the database knew nothing about. These methods each
+    map to one SECURITY DEFINER function carrying its own source-state guard, so the sequence is
+    enforced where it cannot be bypassed.
+
+    NONE OF THEM TAKE AN ACTOR ID. Identity is read from auth.uid() server-side. It used to be
+    passed from the client, so `booked_by` recorded what the browser claimed rather than who
+    acted — forgeable, and wrong by accident the first time a stale id was passed.
+  */
+  commit(id: string, ofqReference: string): Promise<Container>
   uncommit(id: string): Promise<Container>
-  updateLogistics(id: string, patch: LogisticsPatch): Promise<Container>
+  book(id: string, booking: ContainerBooking): Promise<Container>
+  unbook(id: string): Promise<Container>
+  reviseBooking(id: string, booking: ContainerBooking): Promise<Container>
+  schedule(id: string, schedule: ContainerSchedule): Promise<Container>
+  unschedule(id: string): Promise<Container>
+  ship(id: string): Promise<Container>
+  unship(id: string): Promise<Container>
 }
 
 export interface CreateAllocationInput {

@@ -148,16 +148,16 @@ export default function ContainerLogisticsDialog() {
     form.pod.trim().length > 0
 
   const handleBook = () =>
-    void markContainerBooked(container.id, fromBookingForm(bookingForm), user.id)
+    void markContainerBooked(container.id, fromBookingForm(bookingForm))
   const handleSaveBooking = () =>
     void updateContainerBooking(container.id, fromBookingForm(bookingForm))
   const handleUnbook = () => void unmarkContainerBooked(container.id)
   const handleSchedule = () => {
     if (!scheduleValid) return
-    void setContainerSchedule(container.id, fromForm(form), user.id)
+    void setContainerSchedule(container.id, fromForm(form))
   }
   const handleUnschedule = () => void clearContainerSchedule(container.id)
-  const handleShip = () => void markContainerShipped(container.id, user.id)
+  const handleShip = () => void markContainerShipped(container.id)
   const handleUnship = () => void unmarkContainerShipped(container.id)
 
   return (

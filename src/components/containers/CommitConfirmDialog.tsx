@@ -70,7 +70,7 @@ export default function CommitConfirmDialog() {
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      await commitContainer(container.id, ofqReference.trim(), user.id)
+      await commitContainer(container.id, ofqReference.trim())
       closeCommitDialog()
     } finally {
       setSubmitting(false)
