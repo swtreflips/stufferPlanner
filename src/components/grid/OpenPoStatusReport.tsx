@@ -72,6 +72,15 @@ function canEditRow(
   return false
 }
 
+// Declared once and composed per role below — the same column must not be able to drift into
+// two different widths or filters depending on who is looking at it.
+const NAME_COL: ColDef<MasterItem> =
+  { field: 'name', headerName: 'Name', width: 180, filter: SetFilter }
+const DOC_COL: ColDef<MasterItem> =
+  { field: 'documentNumber', headerName: 'Document Number', width: 150 }
+const SHIP_TO_COL: ColDef<MasterItem> =
+  { field: 'shipTo', headerName: 'Ship To', width: 150, filter: SetFilter }
+
 const EDITABLE_FIELDS = new Set(['cargoReady', 'cbmPerCase'])
 
 export default function OpenPoStatusReport() {
@@ -142,17 +151,21 @@ export default function OpenPoStatusReport() {
         cellStyle: { padding: 0 },
       },
       /*
-        The supplier column is INTERNAL-ONLY. Internal spans eighteen suppliers, so the name is
-        the first thing they need. An external user works for one company and — because the plant
-        dropdown always names a single plant — every row on their screen already belongs to a
-        known organization. The column repeated that on all 25 rows and cost 180px of a dense
-        grid to do it.
+        THE LEADING COLUMNS DIFFER BY AUDIENCE, because the two roles arrive with different
+        questions and the first column answers whichever one you have.
+
+          internal   Name, Document Number, Ship To — they span eighteen suppliers, so "whose
+                     is this" comes first and the supplier column stays.
+          external   Ship To, Document Number — the supplier column is gone entirely. It named
+                     the company they work for on every row, and the plant dropdown already
+                     fixes that. Destination is what actually separates one of their rows from
+                     another, so it leads.
+
+        Everything after these is identical for both.
       */
       ...(isInternal
-        ? [{ field: 'name', headerName: 'Name', width: 180, filter: SetFilter } as ColDef<MasterItem>]
-        : []),
-      { field: 'documentNumber', headerName: 'Document Number', width: 150 },
-      { field: 'shipTo', headerName: 'Ship To', width: 150, filter: SetFilter },
+        ? [NAME_COL, DOC_COL, SHIP_TO_COL]
+        : [SHIP_TO_COL, DOC_COL]),
       { field: 'sku', headerName: 'Item', width: 170, filter: SetFilter },
       {
         field: 'originalQuantity',
