@@ -38,8 +38,10 @@ const token = (name: string, fallback: string) =>
 const stufferTheme = themeQuartz.withParams({
   backgroundColor: token('--color-navy-50', '#f7f7f5'),
   foregroundColor: token('--color-navy-900', '#112424'),
-  chromeBackgroundColor: token('--color-navy-900', '#112424'),
-  headerTextColor: token('--color-navy-100', '#eeecea'),
+  // Light header: a column header is content, not chrome. Mirrors RatesApp's grids and the
+  // container tray beside it. See OS/DESIGN.md.
+  chromeBackgroundColor: token('--color-navy-50', '#f7f7f5'),
+  headerTextColor: token('--color-navy-500', '#625d55'),
   borderColor: token('--color-navy-200', '#dad7d3'),
   accentColor: token('--color-amber-accent', '#ad552a'),
   fontFamily: 'DM Sans, system-ui, sans-serif',

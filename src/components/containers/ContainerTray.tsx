@@ -71,12 +71,15 @@ export default function ContainerTray() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Global column header — a dark 40px band that lines up with the master
-          grid header on the right and labels the container-card columns. */}
-      <div className="h-10 shrink-0 flex items-center bg-navy-900 border-b border-navy-700">
+      {/* Global column header — a 40px band that lines up with the master grid header on the
+          right and labels the container-card columns. LIGHT, not dark: a column header is
+          content furniture, and dark is reserved for global navigation chrome. Matching the
+          grid beside it is the whole reason this band exists. See OS/DESIGN.md, "What dark
+          means". */}
+      <div className="h-10 shrink-0 flex items-center bg-navy-50 border-b border-navy-200">
         <div className="flex items-center w-full px-3">
           <div
-            className={`${CONTAINER_COL} shrink-0 text-[10px] font-mono uppercase tracking-widest text-navy-100`}
+            className={`${CONTAINER_COL} shrink-0 text-[10px] font-mono uppercase tracking-widest text-navy-500`}
           >
             Container
           </div>
@@ -85,7 +88,7 @@ export default function ContainerTray() {
               {LINE_COLUMNS.map((c) => (
                 <span
                   key={c.key}
-                  className={`text-[10px] font-mono uppercase tracking-widest text-navy-100 truncate ${
+                  className={`text-[10px] font-mono uppercase tracking-widest text-navy-500 truncate ${
                     c.align === 'right' ? 'text-right' : ''
                   } ${c.key === 'quantity' ? 'pr-3' : ''}`}
                 >

@@ -48,8 +48,14 @@
   --color-navy-100: #eeecea;
   --color-navy-50: #f7f7f5;
 
-  --color-amber-accent: #ad552a;   /* linen signal-600 — 5.11:1 as text */
-  --color-teal-accent: #3f8259;    /* linen sea-600    — 4.62:1 as text, safe under white */
+  /* MODULE ACCENT: container green. The token keeps the name `amber-accent` because renaming
+     it would touch every component, and a skin must never do that — see OS/DESIGN.md. Read it
+     as "the accent", not as "amber". 4.58:1 as text on white, 5.19:1 under ink as a fill. */
+  --color-amber-accent: #25864a;
+  /* Success must stay distinguishable FROM the module accent. linen's sea-600 (#3f8259) is
+     green, and so is this module's accent — side by side they read as one colour and the
+     "saved" flash stops meaning anything. Shifted to a true teal, same lightness curve. */
+  --color-teal-accent: #16809a;
   --color-coral-accent: #b64a40;   /* generated, hue 28 on the fill curve — 5.19:1 */
 }
 
