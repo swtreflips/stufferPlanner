@@ -1,24 +1,56 @@
 @import "tailwindcss";
 
+/*
+  SKIN: linen — the shared platform look, mapped onto this app's tokens.
+
+  Values come from RatesApp's public/skins/linen.css. This app already used DM Sans, so the
+  type barely moves; the palette does the work. Space Mono is replaced by DM Mono to match the
+  family across all three apps.
+
+  THE `navy` RAMP IS DOING TWO JOBS. It spans warm neutral surfaces (50–300: page background,
+  borders) AND dark ink (600–950: headings, the grid chrome, the dark header band). linen keeps
+  those separate — warm `fog` neutrals, deep green `harbor` ink — so this mapping hands the low
+  shades to fog and the high shades to harbor, with the handoff at 500/600. The name stays
+  `navy` because renaming it would touch every component, which is exactly what a skin must not
+  do.
+
+  CONTRAST DROVE TWO CHOICES, not taste:
+
+  `text-navy-400` is the single most-used token in the app — 43 occurrences, muted labels and
+  icons. On the old palette #7389b8 was 3.4:1 on white, already under the floor. It maps to
+  fog-500 (4.97:1) rather than fog-400, which is why the 300→400 step is larger than the rest.
+  A ramp exists to serve the roles that use it, not to be evenly spaced.
+
+  All three accents are TEXT first — text-coral-accent 21, text-amber-accent 11,
+  text-teal-accent 9 — so each takes the 600 step, not 500. The 500s are tuned to sit UNDER
+  near-black text as button fills, which makes them fail as text themselves. Same trap as
+  Schedules, same fix.
+
+  coral has no counterpart in linen (it is a danger colour, and linen defines no danger family),
+  so it is generated at hue 28 on the same fill curve as the other accents — 5.19:1 on white,
+  and it belongs to the palette rather than sitting beside it.
+*/
 @theme {
   --font-sans: 'DM Sans', system-ui, sans-serif;
-  --font-mono: 'Space Mono', ui-monospace, monospace;
+  --font-mono: 'DM Mono', ui-monospace, monospace;
 
-  --color-navy-950: #0a0e1a;
-  --color-navy-900: #0f1629;
-  --color-navy-800: #1a2340;
-  --color-navy-700: #253158;
-  --color-navy-600: #374a7a;
-  --color-navy-500: #4e6399;
-  --color-navy-400: #7389b8;
-  --color-navy-300: #9dafd0;
-  --color-navy-200: #c5d0e6;
-  --color-navy-100: #e8ecf4;
-  --color-navy-50: #f4f6fa;
+  /* dark ink — linen harbor */
+  --color-navy-950: #081515;
+  --color-navy-900: #112424;
+  --color-navy-800: #24403f;
+  --color-navy-700: #2f5252;
+  --color-navy-600: #3d6868;
+  /* warm neutrals — linen fog */
+  --color-navy-500: #625d55;
+  --color-navy-400: #756f67;   /* fog-500: the most-used text token, must clear 4.5:1 */
+  --color-navy-300: #bebab4;
+  --color-navy-200: #dad7d3;
+  --color-navy-100: #eeecea;
+  --color-navy-50: #f7f7f5;
 
-  --color-amber-accent: #f59e0b;
-  --color-teal-accent: #0d9488;
-  --color-coral-accent: #f87171;
+  --color-amber-accent: #ad552a;   /* linen signal-600 — 5.11:1 as text */
+  --color-teal-accent: #3f8259;    /* linen sea-600    — 4.62:1 as text, safe under white */
+  --color-coral-accent: #b64a40;   /* generated, hue 28 on the fill curve — 5.19:1 */
 }
 
 html, body, #root {

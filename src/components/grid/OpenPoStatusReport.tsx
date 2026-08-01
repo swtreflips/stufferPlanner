@@ -25,13 +25,23 @@ import SetFilter from './SetFilter'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
+// ag-Grid is themed through JS params, not Tailwind, so it cannot inherit the skin the way the
+// rest of the app does. These read the same CSS variables index.css defines — otherwise the
+// grid, which is the densest surface here, keeps the old palette while everything around it
+// changes. Values are resolved at module load, which is fine: the skin does not change at
+// runtime in this app.
+const token = (name: string, fallback: string) =>
+  (typeof window !== 'undefined'
+    && getComputedStyle(document.documentElement).getPropertyValue(name).trim())
+  || fallback
+
 const stufferTheme = themeQuartz.withParams({
-  backgroundColor: '#f4f6fa',
-  foregroundColor: '#0f1629',
-  chromeBackgroundColor: '#0f1629',
-  headerTextColor: '#e8ecf4',
-  borderColor: '#c5d0e6',
-  accentColor: '#f59e0b',
+  backgroundColor: token('--color-navy-50', '#f7f7f5'),
+  foregroundColor: token('--color-navy-900', '#112424'),
+  chromeBackgroundColor: token('--color-navy-900', '#112424'),
+  headerTextColor: token('--color-navy-100', '#eeecea'),
+  borderColor: token('--color-navy-200', '#dad7d3'),
+  accentColor: token('--color-amber-accent', '#ad552a'),
   fontFamily: 'DM Sans, system-ui, sans-serif',
   fontSize: 13,
   spacing: 6,
