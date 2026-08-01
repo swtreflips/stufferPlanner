@@ -3,6 +3,8 @@ import { createLocalContainerRepo } from './LocalContainerRepo'
 import { createLocalMasterItemRepo } from './LocalMasterItemRepo'
 import { createLocalProfileRepo } from './LocalProfileRepo'
 import { createLocalSupplierRepo } from './LocalSupplierRepo'
+import { createSupabaseAllocationRepo } from './SupabaseAllocationRepo'
+import { createSupabaseContainerRepo } from './SupabaseContainerRepo'
 import { createSupabaseMasterItemRepo } from './SupabaseMasterItemRepo'
 import { createSupabaseProfileRepo } from './SupabaseProfileRepo'
 import { createSupabaseSupplierRepo } from './SupabaseSupplierRepo'
@@ -16,10 +18,12 @@ import type {
 
 const dataSource = import.meta.env.VITE_DATA_SOURCE ?? 'local'
 
-// Each picker is INDEPENDENT on purpose. Containers and allocations still resolve locally
-// while profiles, suppliers and PO lines come from Supabase — the app runs in that mixed
-// state, so each repo can be migrated and verified on its own instead of flipping five at
-// once and debugging auth, RLS and column mapping simultaneously.
+// Each picker is INDEPENDENT on purpose: a repo can be migrated and verified on its own rather
+// than flipping five at once and debugging auth, RLS and column mapping simultaneously.
+//
+// All five now resolve to Supabase. Containers and allocations were the last, and they were the
+// ones that mattered most — until they landed, a draft container and everything allocated into
+// it lived in a JavaScript object in one browser tab. It looked saved and was not.
 
 function pickMasterItemRepo(): MasterItemRepo {
   switch (dataSource) {
@@ -39,6 +43,8 @@ function pickContainerRepo(): ContainerRepo {
   switch (dataSource) {
     case 'local':
       return createLocalContainerRepo()
+    case 'supabase':
+      return createSupabaseContainerRepo()
     default:
       return createLocalContainerRepo()
   }
@@ -48,6 +54,8 @@ function pickAllocationRepo(): AllocationRepo {
   switch (dataSource) {
     case 'local':
       return createLocalAllocationRepo()
+    case 'supabase':
+      return createSupabaseAllocationRepo()
     default:
       return createLocalAllocationRepo()
   }
