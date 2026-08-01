@@ -151,20 +151,20 @@ export default function OpenPoStatusReport() {
         cellStyle: { padding: 0 },
       },
       /*
-        THE LEADING COLUMNS DIFFER BY AUDIENCE, because the two roles arrive with different
-        questions and the first column answers whichever one you have.
+        SHIP TO COMES BEFORE DOCUMENT NUMBER for both roles. Destination is what you scan by —
+        it groups rows into things that could share a container, which is the whole job of this
+        screen. A document number identifies a row once you have found it; it is a lookup key,
+        not something you read down a column.
 
-          internal   Name, Document Number, Ship To — they span eighteen suppliers, so "whose
-                     is this" comes first and the supplier column stays.
-          external   Ship To, Document Number — the supplier column is gone entirely. It named
-                     the company they work for on every row, and the plant dropdown already
-                     fixes that. Destination is what actually separates one of their rows from
-                     another, so it leads.
+        The only difference is the supplier column, and it is internal-only. Internal spans
+        eighteen suppliers, so "whose is this" leads. An external user works for one company and
+        the plant dropdown already fixes which — the column repeated that on every row and cost
+        180px of a dense grid to do it.
 
         Everything after these is identical for both.
       */
       ...(isInternal
-        ? [NAME_COL, DOC_COL, SHIP_TO_COL]
+        ? [NAME_COL, SHIP_TO_COL, DOC_COL]
         : [SHIP_TO_COL, DOC_COL]),
       { field: 'sku', headerName: 'Item', width: 170, filter: SetFilter },
       {
