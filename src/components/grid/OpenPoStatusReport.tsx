@@ -79,11 +79,11 @@ function canEditRow(
 // Declared once and composed per role below — the same column must not be able to drift into
 // two different widths or filters depending on who is looking at it.
 const NAME_COL: ColDef<MasterItem> =
-  { field: 'name', headerName: 'Supplier', flex: 0.34, minWidth: 34, filter: SetFilter }
+  { field: 'name', headerName: 'Supplier', flex: 0.77, minWidth: 77, filter: SetFilter }
 const DOC_COL: ColDef<MasterItem> =
   { field: 'documentNumber', headerName: 'Doc #', flex: 0.90, minWidth: 90 }
 const SHIP_TO_COL: ColDef<MasterItem> =
-  { field: 'shipTo', headerName: 'Ship To', flex: 1.30, minWidth: 130, filter: SetFilter }
+  { field: 'shipTo', headerName: 'Ship To', flex: 1.26, minWidth: 126, filter: SetFilter }
 
 const EDITABLE_FIELDS = new Set(['cargoReady', 'cbmPerCase'])
 
@@ -185,25 +185,25 @@ export default function OpenPoStatusReport() {
             DOC_COL,
           ]
         : [{ ...SHIP_TO_COL, initialSort: 'asc' as const, initialSortIndex: 0 }, DOC_COL]),
-      { field: 'sku', headerName: 'Item', flex: 1.50, minWidth: 150, filter: SetFilter },
+      { field: 'sku', headerName: 'Item', flex: 1.24, minWidth: 124, filter: SetFilter },
       {
         field: 'originalQuantity',
         headerName: 'Remaining',
-        flex: 0.66,
-        minWidth: 66,
+        flex: 0.60,
+        minWidth: 60,
         type: 'numericColumn',
       },
       {
         field: 'committedQuantity',
         headerName: 'Committed',
-        flex: 0.44,
-        minWidth: 44,
+        flex: 0.36,
+        minWidth: 36,
         type: 'numericColumn',
       },
       {
         headerName: 'Available',
-        flex: 0.66,
-        minWidth: 66,
+        flex: 0.60,
+        minWidth: 60,
         type: 'numericColumn',
         valueGetter: (params) =>
           params.data ? availableQty(params.data.id) : null,
