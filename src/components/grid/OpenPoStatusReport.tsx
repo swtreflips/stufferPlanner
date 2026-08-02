@@ -46,6 +46,10 @@ const stufferTheme = themeQuartz.withParams({
   accentColor: token('--color-amber-accent', '#ad552a'),
   fontFamily: 'DM Sans, system-ui, sans-serif',
   fontSize: 13,
+  // Headers are quieter and denser than the data, so every label fits on one line at these
+  // column widths without wrapping or truncating.
+  headerFontSize: 11,
+  headerFontWeight: 600,
   spacing: 6,
 })
 
@@ -75,11 +79,11 @@ function canEditRow(
 // Declared once and composed per role below — the same column must not be able to drift into
 // two different widths or filters depending on who is looking at it.
 const NAME_COL: ColDef<MasterItem> =
-  { field: 'name', headerName: 'Name', width: 180, filter: SetFilter }
+  { field: 'name', headerName: 'Supplier', flex: 1.14, minWidth: 114, filter: SetFilter }
 const DOC_COL: ColDef<MasterItem> =
-  { field: 'documentNumber', headerName: 'Document Number', width: 150 }
+  { field: 'documentNumber', headerName: 'Doc #', flex: 0.80, minWidth: 80 }
 const SHIP_TO_COL: ColDef<MasterItem> =
-  { field: 'shipTo', headerName: 'Ship To', width: 150, filter: SetFilter }
+  { field: 'shipTo', headerName: 'Ship To', flex: 1.12, minWidth: 112, filter: SetFilter }
 
 const EDITABLE_FIELDS = new Set(['cargoReady', 'cbmPerCase'])
 
@@ -141,7 +145,7 @@ export default function OpenPoStatusReport() {
     () => [
       {
         headerName: '',
-        width: 36,
+        width: 32,
         sortable: false,
         filter: false,
         resizable: false,
@@ -181,22 +185,25 @@ export default function OpenPoStatusReport() {
             DOC_COL,
           ]
         : [{ ...SHIP_TO_COL, initialSort: 'asc' as const, initialSortIndex: 0 }, DOC_COL]),
-      { field: 'sku', headerName: 'Item', width: 170, filter: SetFilter },
+      { field: 'sku', headerName: 'Item', flex: 0.78, minWidth: 78, filter: SetFilter },
       {
         field: 'originalQuantity',
-        headerName: 'Quantity Remaining',
-        width: 150,
+        headerName: 'Remaining',
+        flex: 0.78,
+        minWidth: 78,
         type: 'numericColumn',
       },
       {
         field: 'committedQuantity',
         headerName: 'Committed',
-        width: 110,
+        flex: 0.90,
+        minWidth: 90,
         type: 'numericColumn',
       },
       {
         headerName: 'Available',
-        width: 110,
+        flex: 0.71,
+        minWidth: 71,
         type: 'numericColumn',
         valueGetter: (params) =>
           params.data ? availableQty(params.data.id) : null,
@@ -206,8 +213,9 @@ export default function OpenPoStatusReport() {
       },
       {
         field: 'cbmPerCase',
-        headerName: 'CBM per Case',
-        width: 120,
+        headerName: 'CBM/Case',
+        flex: 0.79,
+        minWidth: 79,
         type: 'numericColumn',
         valueFormatter: formatCbmCell,
         editable: (params: EditableCallbackParams<MasterItem>) =>
@@ -230,14 +238,16 @@ export default function OpenPoStatusReport() {
       {
         field: 'cbmTotal',
         headerName: 'Total CBM',
-        width: 110,
+        flex: 0.76,
+        minWidth: 76,
         type: 'numericColumn',
         valueFormatter: formatCbmCell,
       },
       {
         field: 'cargoReady',
-        headerName: 'Cargo Ready Date',
-        width: 130,
+        headerName: 'CRD',
+        flex: 0.48,
+        minWidth: 48,
         valueFormatter: formatDateCell,
         editable: (params: EditableCallbackParams<MasterItem>) =>
           canEditRow(params.data, user, myOrgIds),
@@ -265,6 +275,22 @@ export default function OpenPoStatusReport() {
       sortable: true,
       filter: false,
       resizable: true,
+      /*
+        Columns FLEX to the pane instead of carrying fixed widths. The fixed set summed to 1416px
+        against roughly 860px of pane, so the grid always scrolled horizontally — and a column
+        you have to scroll to reach is a column you stop using.
+
+        NO WRAPPING. Two-line headers were tried and abandoned: at these widths the words broke
+        mid-word — "Suppl ier", "Committe d" — which reads worse than anything it was avoiding,
+        and no amount of raising the floors fixed it, because the sort arrow, the sort-index
+        number and the filter button take roughly 46px of the cell before any text is drawn.
+
+        Instead each minWidth is the width that header actually needs ON ONE LINE, measured in
+        the browser rather than estimated: the label, its icons, and the padding. They total
+        850px against 862px of pane at 1440, so everything fits with nothing truncated and
+        nothing broken. Below that the grid scrolls, which is the honest outcome for eleven
+        columns of logistics data on a 1366-wide screen.
+      */
     }),
     [],
   )
@@ -337,7 +363,7 @@ export default function OpenPoStatusReport() {
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
         theme={stufferTheme}
-        headerHeight={40}
+
         rowHeight={34}
         animateRows
         getRowClass={getRowClass}
