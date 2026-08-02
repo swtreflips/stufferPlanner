@@ -82,10 +82,6 @@ interface PlannerStore {
   // state — factory scoping is handled separately via user.supplierId.
   supplierFilterId: string | null
 
-  // Monotonic per-supplier sequence (supplier code → next number).
-  // Never decremented on delete; ensures container codes are stable references.
-  containerCodeSequences: Record<string, number>
-
   // Live editing presence
   locks: Record<string, LockEntry>
   mySessionId: string
@@ -231,29 +227,31 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     csvUploadDialog: { open: false },
     recentlySavedKey: null,
     supplierFilterId: null,
-    containerCodeSequences: {},
     locks: {},
     mySessionId: SESSION_ID,
 
+    /*
+      The container NUMBER is no longer minted here. It came from an in-memory counter that
+      started empty on every page load and never looked at the containers already loaded, so
+      adding one for a supplier that already had a container re-issued its number and the UNIQUE
+      constraint on `code` rejected it. It only failed for suppliers with an existing container,
+      which is exactly why it looked arbitrary.
+
+      Numbering is persistent state, so it belongs where the state lives: the repository asks
+      next_container_code, which advances the sequence atomically.
+    */
     async createContainer({ name, type, destination, supplierId }) {
       const supplier = get().suppliers.find((s) => s.id === supplierId)
       if (!supplier) throw new Error(`createContainer: unknown supplier ${supplierId}`)
-      const prefix = supplier.code.toUpperCase()
-      const next = (get().containerCodeSequences[prefix] ?? 0) + 1
-      const code = `${prefix}${String(next).padStart(4, '0')}`
-      const capacityCbm = getCapacityConfig(type)?.defaultOperationalCbm ?? null
       const container = await containerRepo.create({
-        code,
+        supplierCode: supplier.code.toUpperCase(),
         name,
         type,
         destination,
         supplierId,
-        capacityCbm,
+        capacityCbm: getCapacityConfig(type)?.defaultOperationalCbm ?? null,
       })
-      set((s) => ({
-        containers: [...s.containers, container],
-        containerCodeSequences: { ...s.containerCodeSequences, [prefix]: next },
-      }))
+      set((s) => ({ containers: [...s.containers, container] }))
     },
 
     async deleteContainer(id) {

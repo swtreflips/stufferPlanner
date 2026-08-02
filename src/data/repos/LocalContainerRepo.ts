@@ -10,6 +10,17 @@ let nextId = 1
 // shape matches what Supabase returns.
 const LOCAL_ACTOR = 'local-user'
 
+/* Derived from the containers already held rather than from a counter, for the same reason the
+   Supabase side asks the database: a counter that does not know what already exists re-issues
+   numbers that do. */
+const nextLocalCode = (containers: Container[], prefix: string): string => {
+  const used = containers
+    .filter((c) => c.code.startsWith(prefix))
+    .map((c) => Number(c.code.slice(prefix.length)))
+    .filter((n) => Number.isFinite(n))
+  return `${prefix}${String(Math.max(0, ...used) + 1).padStart(4, '0')}`
+}
+
 export function createLocalContainerRepo(): ContainerRepo {
   let containers: Container[] = []
 
@@ -41,7 +52,7 @@ export function createLocalContainerRepo(): ContainerRepo {
       const displayOrder = input.displayOrder ?? containers.length
       const container: Container = {
         id: `container-${nextId++}`,
-        code: input.code,
+        code: nextLocalCode(containers, input.supplierCode),
         status: 'draft',
         name: input.name,
         type: input.type,

@@ -16,8 +16,8 @@ interface Props {
 export default function AddContainerDialog({ open, onOpenChange, defaultName }: Props) {
   const masterItems = usePlannerStore((s) => s.masterItems)
   const suppliers = usePlannerStore((s) => s.suppliers)
-  const containerCodeSequences = usePlannerStore((s) => s.containerCodeSequences)
   const createContainer = usePlannerStore((s) => s.createContainer)
+  const containers = usePlannerStore((s) => s.containers)
   const myOrgIds = usePlannerStore((s) => s.myOrgIds)
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const { user } = useAuth()
@@ -61,6 +61,7 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
   )
   const [type, setType] = useState<ContainerType>('40HC')
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -86,15 +87,26 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
     )
   }, [open, destinations])
 
-  // Live preview of the code that will be minted on confirm. Depends only on
-  // the supplier — destination is no longer part of the code.
+  /*
+    Preview of the code that will be minted, derived from the containers already loaded rather
+    than from a counter — a counter that did not know what already existed is precisely what was
+    re-issuing numbers and tripping the UNIQUE constraint.
+
+    INDICATIVE, not authoritative: the real number is issued by the database on confirm, so if a
+    colleague creates one for the same supplier in the meantime this preview will be one behind.
+    It is a hint about what you are about to get, and the cost of it being occasionally stale is
+    nothing, whereas minting the number here cost a failed save with no message.
+  */
   const codePreview = useMemo(() => {
     const supplier = suppliers.find((s) => s.id === supplierId)
     if (!supplier) return null
     const prefix = supplier.code.toUpperCase()
-    const next = (containerCodeSequences[prefix] ?? 0) + 1
-    return `${prefix}${String(next).padStart(4, '0')}`
-  }, [supplierId, suppliers, containerCodeSequences])
+    const used = containers
+      .filter((c) => c.code.startsWith(prefix))
+      .map((c) => Number(c.code.slice(prefix.length)))
+      .filter((n) => Number.isFinite(n))
+    return `${prefix}${String(Math.max(0, ...used) + 1).padStart(4, '0')}`
+  }, [supplierId, suppliers, containers])
 
   const canSubmit =
     name.trim().length > 0 &&
@@ -106,6 +118,7 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
     e.preventDefault()
     if (!canSubmit) return
     setSubmitting(true)
+    setError(null)
     try {
       await createContainer({
         name: name.trim(),
@@ -114,6 +127,11 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
         supplierId,
       })
       onOpenChange(false)
+    } catch (err) {
+      // There was no catch here at all. A failed create left the dialog open with the button
+      // re-enabled and nothing said — which is how a UNIQUE-constraint rejection presented as
+      // "the button does nothing sometimes" rather than as an error.
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSubmitting(false)
     }
@@ -196,6 +214,11 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
               <div className="text-[10px] font-mono uppercase tracking-widest text-navy-500">
                 This will be{' '}
                 <span className="text-amber-accent font-bold">{codePreview}</span>
+              </div>
+            ) : null}
+            {error ? (
+              <div className="rounded-lg border border-coral-accent/30 bg-coral-accent/5 px-3 py-2 text-xs text-coral-accent">
+                {error}
               </div>
             ) : null}
             <div className="flex justify-end gap-2 pt-2">

@@ -38,7 +38,14 @@ export interface ProfileRepo {
 }
 
 export interface CreateContainerInput {
-  code: string
+  /*
+    NO `code` FIELD. The container number is issued by the persistence layer, not chosen by the
+    caller — it used to come from an in-memory counter in the store that reset on every page
+    load, so the first container added for a supplier that already had one re-issued its number
+    and hit the UNIQUE constraint. Numbering is state; state belongs where state lives.
+    `supplierCode` is the organization's two-letter prefix the number is issued against.
+  */
+  supplierCode: string
   name: string
   type: ContainerType
   destination: string

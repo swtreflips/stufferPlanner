@@ -115,6 +115,17 @@ export function createSupabaseContainerRepo(): ContainerRepo {
     },
 
     async create(input: CreateContainerInput) {
+      /*
+        The code comes from next_container_code, which advances planner_sequences in a single
+        INSERT ... ON CONFLICT DO UPDATE RETURNING. Two people adding a container for the same
+        supplier at the same moment therefore cannot receive the same number — which a
+        read-then-increment, in the client or here, could not promise.
+      */
+      const { data: code, error: codeError } = await supabase.rpc('next_container_code', {
+        p_org_code: input.supplierCode,
+      })
+      if (codeError) fail('Failed to allocate a container number', codeError)
+
       // display_order is assigned here when omitted, so two people adding a container at once
       // cannot both claim the same slot from a stale local count.
       let displayOrder = input.displayOrder
@@ -129,7 +140,7 @@ export function createSupabaseContainerRepo(): ContainerRepo {
         .from('planner_containers')
         .insert({
           organization_id: input.supplierId,
-          code: input.code,
+          code: code as string,
           name: input.name,
           type: input.type,
           destination: input.destination,
