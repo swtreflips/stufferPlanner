@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import type { Container } from '../../types/container'
+import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import ContainerCard from './ContainerCard'
 import AddContainerDialog from './AddContainerDialog'
@@ -17,21 +18,43 @@ export default function ContainerTray() {
   const containers = usePlannerStore((s) => s.containers)
   const suppliers = usePlannerStore((s) => s.suppliers)
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
+  const { user } = useAuth()
+  const isInternal = user.role === 'internal' || user.role === 'admin'
 
   // Containers and drafts follow the same focus filter as the grid, for every role. The old
   // code pinned factory users to their own supplierId, which hid a sibling plant's drafts from
   // someone entitled to see them — see the note in OpenPoStatusReport. RLS scopes the rows;
   // this only decides which of those the user is currently looking at.
+  const supplierName = (id: string) =>
+    suppliers.find((s) => s.id === id)?.name ?? id
+
+  /*
+    Ordered the same way as the PO grid on the right: supplier, then destination. The two panes
+    are read together — you drag from one into the other — so a container ordered differently
+    from the lines that can go into it makes you search rather than scan.
+
+    Internal sorts by supplier first; external has one supplier per view (the plant dropdown
+    guarantees it), so that key is constant and destination leads on its own. Same rule as the
+    grid, degenerating the same way, rather than a second rule that could drift from it.
+
+    displayOrder remains the final tiebreak, so two containers to the same destination keep the
+    order they were created in instead of shuffling on every render.
+  */
   const { committed, drafts } = useMemo(() => {
     const scoped = supplierFilterId
       ? containers.filter((c) => c.supplierId === supplierFilterId)
       : containers
-    const sorted = [...scoped].sort((a, b) => a.displayOrder - b.displayOrder)
+    const sorted = [...scoped].sort((a, b) =>
+      (isInternal ? supplierName(a.supplierId).localeCompare(supplierName(b.supplierId)) : 0)
+      || a.destination.localeCompare(b.destination)
+      || a.displayOrder - b.displayOrder,
+    )
     return {
       committed: sorted.filter((c) => c.status === 'committed'),
       drafts: sorted.filter((c) => c.status === 'draft'),
     }
-  }, [containers, supplierFilterId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containers, supplierFilterId, suppliers, isInternal])
 
   // Cluster by supplier inside each section, with small labels between groups. This used to be
   // "admin/internal only", on the assumption that a factory sees exactly one supplier. Junsun
