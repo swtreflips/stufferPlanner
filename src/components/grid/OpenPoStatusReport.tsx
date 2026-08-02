@@ -162,10 +162,25 @@ export default function OpenPoStatusReport() {
         180px of a dense grid to do it.
 
         Everything after these is identical for both.
+
+        DEFAULT SORT follows the same order: supplier, then destination. Internal viewing all
+        suppliers gets every plant's rows stacked together and each plant's rows grouped by where
+        they are going — which is the shape you need to see what could share a container. With a
+        single supplier selected, Name is constant, so that sort degenerates to Ship To on its
+        own and no special case is needed. External has no Name column, so Ship To simply leads.
+
+        initialSort, NOT sort. `sort` is re-applied every time the column definitions are
+        rebuilt, and this memo rebuilds on recentlySavedKey — which changes on every inline
+        edit. That would silently throw away a user's own sort seconds after they set it.
+        initialSort applies once and then leaves them alone.
       */
       ...(isInternal
-        ? [NAME_COL, SHIP_TO_COL, DOC_COL]
-        : [SHIP_TO_COL, DOC_COL]),
+        ? [
+            { ...NAME_COL, initialSort: 'asc' as const, initialSortIndex: 0 },
+            { ...SHIP_TO_COL, initialSort: 'asc' as const, initialSortIndex: 1 },
+            DOC_COL,
+          ]
+        : [{ ...SHIP_TO_COL, initialSort: 'asc' as const, initialSortIndex: 0 }, DOC_COL]),
       { field: 'sku', headerName: 'Item', width: 170, filter: SetFilter },
       {
         field: 'originalQuantity',
