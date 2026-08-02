@@ -79,11 +79,11 @@ function canEditRow(
 // Declared once and composed per role below — the same column must not be able to drift into
 // two different widths or filters depending on who is looking at it.
 const NAME_COL: ColDef<MasterItem> =
-  { field: 'name', headerName: 'Supplier', flex: 1.14, minWidth: 114, filter: SetFilter }
+  { field: 'name', headerName: 'Supplier', flex: 0.34, minWidth: 34, filter: SetFilter }
 const DOC_COL: ColDef<MasterItem> =
-  { field: 'documentNumber', headerName: 'Doc #', flex: 0.80, minWidth: 80 }
+  { field: 'documentNumber', headerName: 'Doc #', flex: 0.90, minWidth: 90 }
 const SHIP_TO_COL: ColDef<MasterItem> =
-  { field: 'shipTo', headerName: 'Ship To', flex: 1.12, minWidth: 112, filter: SetFilter }
+  { field: 'shipTo', headerName: 'Ship To', flex: 1.30, minWidth: 130, filter: SetFilter }
 
 const EDITABLE_FIELDS = new Set(['cargoReady', 'cbmPerCase'])
 
@@ -185,25 +185,25 @@ export default function OpenPoStatusReport() {
             DOC_COL,
           ]
         : [{ ...SHIP_TO_COL, initialSort: 'asc' as const, initialSortIndex: 0 }, DOC_COL]),
-      { field: 'sku', headerName: 'Item', flex: 0.78, minWidth: 78, filter: SetFilter },
+      { field: 'sku', headerName: 'Item', flex: 1.50, minWidth: 150, filter: SetFilter },
       {
         field: 'originalQuantity',
         headerName: 'Remaining',
-        flex: 0.78,
-        minWidth: 78,
+        flex: 0.66,
+        minWidth: 66,
         type: 'numericColumn',
       },
       {
         field: 'committedQuantity',
         headerName: 'Committed',
-        flex: 0.90,
-        minWidth: 90,
+        flex: 0.44,
+        minWidth: 44,
         type: 'numericColumn',
       },
       {
         headerName: 'Available',
-        flex: 0.71,
-        minWidth: 71,
+        flex: 0.66,
+        minWidth: 66,
         type: 'numericColumn',
         valueGetter: (params) =>
           params.data ? availableQty(params.data.id) : null,
@@ -214,8 +214,8 @@ export default function OpenPoStatusReport() {
       {
         field: 'cbmPerCase',
         headerName: 'CBM/Case',
-        flex: 0.79,
-        minWidth: 79,
+        flex: 0.70,
+        minWidth: 70,
         type: 'numericColumn',
         valueFormatter: formatCbmCell,
         editable: (params: EditableCallbackParams<MasterItem>) =>
@@ -238,16 +238,16 @@ export default function OpenPoStatusReport() {
       {
         field: 'cbmTotal',
         headerName: 'Total CBM',
-        flex: 0.76,
-        minWidth: 76,
+        flex: 0.70,
+        minWidth: 70,
         type: 'numericColumn',
         valueFormatter: formatCbmCell,
       },
       {
         field: 'cargoReady',
         headerName: 'CRD',
-        flex: 0.48,
-        minWidth: 48,
+        flex: 1.08,
+        minWidth: 108,
         valueFormatter: formatDateCell,
         editable: (params: EditableCallbackParams<MasterItem>) =>
           canEditRow(params.data, user, myOrgIds),
@@ -280,16 +280,20 @@ export default function OpenPoStatusReport() {
         against roughly 860px of pane, so the grid always scrolled horizontally — and a column
         you have to scroll to reach is a column you stop using.
 
-        NO WRAPPING. Two-line headers were tried and abandoned: at these widths the words broke
-        mid-word — "Suppl ier", "Committe d" — which reads worse than anything it was avoiding,
-        and no amount of raising the floors fixed it, because the sort arrow, the sort-index
-        number and the filter button take roughly 46px of the cell before any text is drawn.
+        WIDTHS SERVE THE VALUES, NOT THE HEADERS. Eleven columns in 862px is roughly 78px each,
+        so something has to give; sizing every column to fit its own LABEL meant several values
+        truncated instead, which is the wrong way round. A header is read once and then known —
+        a truncated value has to be hovered or widened every time you need it.
 
-        Instead each minWidth is the width that header actually needs ON ONE LINE, measured in
-        the browser rather than estimated: the label, its icons, and the padding. They total
-        850px against 862px of pane at 1440, so everything fits with nothing truncated and
-        nothing broken. Below that the grid scrolls, which is the honest outcome for eleven
-        columns of logistics data on a 1366-wide screen.
+        Four columns are sized so their widest value renders in full, measured in the browser:
+        Item (PECO-FH12717-1/6-A-V3), Ship To (Northampton, PA), CRD (Aug 20, 2026) and Doc #.
+        The rest are squeezed to the width their values need — quantities are four digits, CBM
+        is six characters — and their headers truncate to "Remaini…", "Availab…". That is the
+        deliberate trade.
+
+        Supplier is squeezed hardest despite long names, because the grid is SORTED by supplier:
+        rows arrive in contiguous blocks, so the name is legible from the block you are in even
+        when the cell clips. Context is doing the work the pixels would otherwise have to.
       */
     }),
     [],
