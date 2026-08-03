@@ -30,7 +30,7 @@ with a table-name collision in the middle.
 |---|---|
 | **Shared board** | Internal and factories look at the same planning surface |
 | **Scoping** | A factory sees only its own POs and containers. Internal sees everything |
-| **Internal pushes** | Open PO lines and quantities — `plannerInput.csv` weekly, a NetSuite API later |
+| **Internal pushes** | Open PO lines and quantities — `plannerInput.csv` weekly, a NetSuite API later. **Built and live — see [SYNC.md](SYNC.md)** |
 | **Factories return** | Cargo ready dates and CBM — `plannerEnrichdata.xlsx`, or typed into the grid |
 | **The app shows** | The latest value per PO line |
 | **The point** | **Cargo ready dates move. How far, how often, and who moved them must be recorded.** Planning is the reason this app exists, and dates slipping is the thing planning is against |
@@ -726,17 +726,27 @@ browser, and the existing [MasterCsvUploadDialog](src/components/grid/MasterCsvU
 is the seam.
 
 ```
-internal ──plannerInput.csv──▶ upsert planner_po_lines on (document_number, line_id)
+internal ──plannerInput.csv──▶ sync_po_lines(rows, 'csv')   ← Settings, internal only
 factory  ──enrich file────────▶ update cargo_ready, cbm_per_case, cbm_total
-both     ──MUI grid edit──────▶ same columns, same trigger, source='grid'
+both     ──grid edit──────────▶ same columns, same trigger, source='grid'
 ```
 
 RLS decides what each side may touch, so the *same code path* is safe for both. The trigger
 records both identically.
 
-Later, the NetSuite API replaces the internal CSV. That path runs server-side with the service
-key, which bypasses RLS — so it must set `organization_id` correctly itself. It is the one
-writer with no policy protecting it.
+> **The internal push is built. [SYNC.md](SYNC.md) is the document for it.**
+>
+> Two corrections to what this section originally assumed. It is **not an upsert on
+> `(document_number, line_id)`** — there is no `line_id` column, the key is
+> `(document_number, sku)`, and it is not an upsert at all but a full snapshot reconcile that
+> also CLOSES lines the export stopped carrying. And it does not live in
+> `MasterCsvUploadDialog`; that dialog remains the factory's enrich path. The internal push has
+> its own home under Settings, because loading the week's data is administration rather than
+> planning.
+
+Later, the NetSuite API replaces the internal CSV — by calling the **same function** with
+`source='api'`. That path runs server-side with the service key, which bypasses RLS, so it must
+set `organization_id` correctly itself. It is the one writer with no policy protecting it.
 
 ---
 
