@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AllCommunityModule,
   ModuleRegistry,
@@ -104,6 +104,10 @@ export default function OpenPoStatusReport() {
   const { user } = useAuth()
   const isInternal = user.role === 'internal' || user.role === 'admin'
 
+  // Local, not in the store: it is a way of looking at the board, not a fact about it, and it
+  // should not survive a reload or follow you between sessions.
+  const [showClosed, setShowClosed] = useState(false)
+
   // Hide fully-committed rows, then honor the supplier focus filter — for EVERY role.
   //
   // This used to pin factory users to `user.supplierId`, which was wrong once sibling plants
@@ -111,14 +115,27 @@ export default function OpenPoStatusReport() {
   // the client then threw 9 of them away. The scoping is the database's job, and it already
   // does it — my_orgs() covers own-org plus siblings. Re-applying a narrower rule here did not
   // add safety, it subtracted data the user is allowed to see, invisibly.
+  // Closed lines are LOADED but not shown. They are excluded here rather than in the repository
+  // because a container built last week can still hold a PO that closed on Monday — the cards
+  // resolve those rows by id, and dropping them from the store would leave an allocation unable
+  // to name what is inside it. The board filters; the store keeps everything.
   const visibleRows = useMemo(
     () =>
       masterItems.filter((m) => {
-        if (m.committedQuantity >= m.originalQuantity) return false
+        if (m.isClosed && !showClosed) return false
+        // A closed line has nothing left to plan, so the fully-committed rule — which exists to
+        // clear finished work off the board — must not also hide it when someone has explicitly
+        // asked to see closed rows.
+        if (!m.isClosed && m.committedQuantity >= m.originalQuantity) return false
         if (supplierFilterId) return m.supplierId === supplierFilterId
         return true
       }),
-    [masterItems, supplierFilterId],
+    [masterItems, supplierFilterId, showClosed],
+  )
+
+  const closedCount = useMemo(
+    () => masterItems.filter((m) => m.isClosed).length,
+    [masterItems],
   )
 
   const gridApiRef = useRef<GridApi<MasterItem> | null>(null)
@@ -301,6 +318,9 @@ export default function OpenPoStatusReport() {
 
   const getRowClass = (params: { data?: MasterItem }) => {
     if (!params.data) return undefined
+    // A closed line is history, not work. Struck through as well as faded, because fading alone
+    // is what a fully-committed row already looks like and the two mean different things.
+    if (params.data.isClosed) return 'opacity-50 line-through'
     return availableQty(params.data.id) === 0 ? 'opacity-50' : undefined
   }
 
@@ -361,7 +381,20 @@ export default function OpenPoStatusReport() {
   }
 
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full flex flex-col">
+      {/* Only appears once something has actually closed, so the ordinary board is unchanged.
+          A permanently visible switch for a state most weeks do not have is just noise. */}
+      {closedCount > 0 ? (
+        <label className="flex items-center justify-end gap-1.5 px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-navy-400 cursor-pointer border-b border-navy-200 bg-navy-50">
+          <input
+            type="checkbox"
+            checked={showClosed}
+            onChange={(e) => setShowClosed(e.target.checked)}
+            className="accent-amber-accent"
+          />
+          Show {closedCount} closed
+        </label>
+      ) : null}
       <AgGridReact<MasterItem>
         rowData={visibleRows}
         columnDefs={columnDefs}

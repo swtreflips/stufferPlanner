@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ChevronDown, LogOut, Settings, User } from 'lucide-react'
 import { useAuth } from '../../auth/AuthProvider'
 import { supabase } from '../../lib/supabase'
@@ -57,6 +58,8 @@ export default function AccountMenu() {
   const subtitle =
     user.role === 'factory' ? (user.supplierName ?? ROLE_LABELS.factory) : ROLE_LABELS[user.role]
 
+  const canOpenSettings = user.role === 'internal' || user.role === 'admin'
+
   return (
     <div className="relative" ref={menuRef}>
       <button
@@ -95,8 +98,8 @@ export default function AccountMenu() {
             </p>
           </div>
 
-          {/* Placeholders, matching RatesApp. Inert on purpose — a menu item that silently does
-              nothing is better than one that navigates to a page that does not exist yet. */}
+          {/* Still a placeholder, matching RatesApp. Inert on purpose — a menu item that
+              silently does nothing is better than one that navigates nowhere. */}
           <button
             type="button"
             disabled
@@ -105,14 +108,31 @@ export default function AccountMenu() {
             <User className="w-[15px] h-[15px]" />
             Profile
           </button>
-          <button
-            type="button"
-            disabled
-            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-navy-400 cursor-not-allowed"
-          >
-            <Settings className="w-[15px] h-[15px]" />
-            Settings
-          </button>
+
+          {/* Settings is where the week's ERP data is loaded, which is administration rather
+              than planning — so it lives behind this menu instead of on the board. A supplier
+              keeps the inert version: there is nothing there for them, and a live link to a
+              page that would bounce them is worse than no link. */}
+          {canOpenSettings ? (
+            <Link
+              to="/settings"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-navy-700 transition-colors hover:bg-navy-100"
+            >
+              <Settings className="w-[15px] h-[15px]" />
+              Settings
+            </Link>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-navy-400 cursor-not-allowed"
+            >
+              <Settings className="w-[15px] h-[15px]" />
+              Settings
+            </button>
+          )}
 
           <div className="my-1 border-t border-navy-100" />
           <button

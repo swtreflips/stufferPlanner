@@ -8,12 +8,48 @@ import type {
 import type { Allocation } from '../../types/allocation'
 import type { Supplier } from '../../types/supplier'
 import type { Profile } from '../../types/profile'
+import type {
+  Closure,
+  ConfirmedReason,
+  ImportBatch,
+  SyncSummary,
+} from '../../types/sync'
+import type { SnapshotRow } from '../../utils/plannerInputParser'
 
 export interface MasterItemRepo {
   fetchAll(): Promise<MasterItem[]>
   updateCargoReady(id: string, isoDate: string): Promise<void>
   updateCbmPerCase(id: string, value: number): Promise<void>
   commitQuantity(id: string, delta: number): Promise<void>
+
+  /*
+    THE WEEKLY ERP SNAPSHOT.
+
+    `previewSync` and `applySync` take the identical argument and return the identical shape,
+    because server-side they are two entry points onto one diff function. The preview is not a
+    simulation of the apply — it is the same calculation with the writing half left off, which
+    is the only arrangement where a confirm screen can promise what will happen.
+
+    Neither takes an actor: `sync_po_lines` reads auth.uid() itself and refuses anyone who is
+    not internal, so the panel that calls this cannot widen who may push data by passing a
+    different id.
+  */
+  previewSync(rows: SnapshotRow[]): Promise<SyncSummary>
+  applySync(rows: SnapshotRow[], force: boolean): Promise<SyncSummary>
+
+  fetchClosures(): Promise<Closure[]>
+  fetchImportBatches(limit: number): Promise<ImportBatch[]>
+
+  /**
+   * Replaces the sync's GUESS with what a person established. Writes only the confirmed
+   * columns — the inference is left exactly as it was, so "what did the system think, and was
+   * it right" stays answerable.
+   */
+  confirmClosureReason(
+    lineId: string,
+    reason: ConfirmedReason,
+    note: string | null,
+  ): Promise<void>
 }
 
 export interface SupplierRepo {

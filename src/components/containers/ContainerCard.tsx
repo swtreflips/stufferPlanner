@@ -73,16 +73,21 @@ export default function ContainerCard({ container }: Props) {
     let totalQty = 0
     let totalCbm = 0
     let maxCargoReady: string | null = null
+    // Lines planned in here that the ERP has since stopped listing. Counted alongside the other
+    // metrics rather than fetched: the sync already loaded every line, closed ones included, so
+    // this is a property of what is on screen and needs no second round trip.
+    let closedLines = 0
     for (const a of allocations) {
       const item = masterItems.find((m) => m.id === a.masterItemId)
       if (!item) continue
       totalQty += a.quantity
       totalCbm += item.cbmPerCase * a.quantity
+      if (item.isClosed) closedLines++
       if (!maxCargoReady || item.cargoReady > maxCargoReady) {
         maxCargoReady = item.cargoReady
       }
     }
-    return { lines: allocations.length, totalQty, totalCbm, maxCargoReady }
+    return { lines: allocations.length, totalQty, totalCbm, maxCargoReady, closedLines }
   }, [allocations, masterItems])
 
   const { setNodeRef, isOver } = useDroppable({
@@ -212,6 +217,16 @@ export default function ContainerCard({ container }: Props) {
               <div className="truncate">{formatDate(metrics.maxCargoReady)}</div>
             ) : null}
             <div>{metrics.totalQty} cases</div>
+            {/* Surfaced on the collapsed card as well as inside, because a container someone
+                has not opened this week is exactly the one where this goes unnoticed. */}
+            {metrics.closedLines > 0 ? (
+              <div
+                title="These PO lines are no longer open in the ERP"
+                className="text-coral-accent"
+              >
+                {metrics.closedLines} closed
+              </div>
+            ) : null}
           </div>
 
         </div>

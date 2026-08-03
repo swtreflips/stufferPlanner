@@ -63,13 +63,26 @@ export default function AllocationCard({ allocation, masterItem, onClick }: Prop
       </span>
       <span className="flex min-w-0 items-center gap-1.5">
         {lock ? <LockedAvatar lock={lock} /> : null}
+        {/* The PO line stopped appearing in the ERP export while these cases were already
+            planned into this container. The sync deliberately changes nothing here — it flags
+            and leaves the decision to a person, which only works if the person can see it. */}
+        {masterItem.isClosed ? (
+          <span
+            title="This PO line is no longer open in the ERP"
+            className="shrink-0 rounded bg-coral-accent/10 px-1 text-[9px] font-mono uppercase tracking-widest text-coral-accent"
+          >
+            closed
+          </span>
+        ) : null}
         <span className="truncate font-semibold text-navy-900">{masterItem.sku}</span>
       </span>
       <span className="pr-3 text-right font-mono font-semibold tabular-nums text-navy-900">
         {allocation.quantity}
       </span>
       <span className="min-w-0 truncate font-mono text-navy-500">
-        {formatDate(masterItem.cargoReady)}
+        {/* Guarded: formatDate on an empty string renders the literal text "Invalid Date" into
+            the card. A line with no cargo ready date yet is ordinary, not an error. */}
+        {masterItem.cargoReady ? formatDate(masterItem.cargoReady) : '—'}
       </span>
     </button>
   )
