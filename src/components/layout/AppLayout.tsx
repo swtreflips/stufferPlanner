@@ -4,6 +4,7 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  pointerWithin,
   useSensor,
   useSensors,
   type DragCancelEvent,
@@ -44,6 +45,7 @@ interface DraggedItemData {
 }
 
 interface DropTargetData {
+  // 'container' — a container card. 'masterList' — the open-PO pane, i.e. taking cases back out.
   type?: string
   containerId?: string
   destination?: string
@@ -98,6 +100,26 @@ export default function AppLayout() {
     const activeData = active.data.current as DraggedItemData | undefined
     const overData = over?.data.current as DropTargetData | undefined
 
+    /*
+      DROPPED ON THE MASTER PANE — pulling a line back out of a container.
+
+      This is the gesture people reach for first, and until the pane became a drop target it
+      released over nothing and was discarded in silence. It opens the split dialog rather than
+      returning the cases outright: "take it out" rarely means "take ALL of it out", and a drag
+      that emptied a line on release would be a destructive action fired by a slipped mouse.
+
+      The lock is deliberately NOT released here — the dialog owns it from this point and lets it
+      go when it closes, exactly as it does for a click.
+    */
+    if (
+      overData?.type === 'masterList' &&
+      activeData?.type === 'allocation' &&
+      activeData.allocationId
+    ) {
+      openAllocationDialog({ kind: 'edit', allocationId: activeData.allocationId })
+      return
+    }
+
     if (!over || overData?.type !== 'container' || !overData.containerId) {
       releaseForActive(activeData)
       return
@@ -147,6 +169,22 @@ export default function AppLayout() {
   return (
     <DndContext
       sensors={sensors}
+      /*
+        THE CURSOR DECIDES, not the dragged card's rectangle.
+
+        dnd-kit defaults to `rectIntersection`, which picks whichever droppable the DRAGGED
+        ELEMENT overlaps most. That was fine while every drop target was a container card of
+        roughly the same size. It stops being fine now that the master pane is a target too:
+        the pane is most of the screen and a card is a few hundred pixels, so an allocation
+        dragged anywhere near the divider would have the pane out-overlap the card underneath
+        the cursor and steal the drop — sending a line back to the master list when the user
+        was moving it one container to the left.
+
+        `pointerWithin` asks a simpler question: what is under the pointer? That is what someone
+        is aiming with, and it makes a huge target and a small one compete fairly. It requires a
+        pointer-based sensor, which is the only kind configured here.
+      */
+      collisionDetection={pointerWithin}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}

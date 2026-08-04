@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useDroppable } from '@dnd-kit/core'
 import {
   AllCommunityModule,
   ModuleRegistry,
@@ -107,6 +108,16 @@ export default function OpenPoStatusReport() {
   // Local, not in the store: it is a way of looking at the board, not a fact about it, and it
   // should not survive a reload or follow you between sessions.
   const [showClosed, setShowClosed] = useState(false)
+
+  // The whole master pane is a drop zone for allocations being pulled back out of a container.
+  // `isOver` alone would light up for master rows being dragged INTO containers as well — those
+  // pass over this pane constantly — so the affordance is gated on what is actually being held.
+  const { setNodeRef: setDropRef, isOver, active } = useDroppable({
+    id: 'master-list',
+    data: { type: 'masterList' },
+  })
+  const returningAllocation =
+    isOver && (active?.data.current as { type?: string } | undefined)?.type === 'allocation'
 
   // Hide fully-committed rows, then honor the supplier focus filter — for EVERY role.
   //
@@ -381,7 +392,25 @@ export default function OpenPoStatusReport() {
   }
 
   return (
-    <div className="h-full w-full flex flex-col">
+    <div ref={setDropRef} className="relative h-full w-full flex flex-col">
+      {/*
+        DRAGGING A LINE OUT OF A CONTAINER LANDS HERE.
+
+        Until this existed, ContainerCard was the only drop target in the app, so pulling a line
+        back towards the grid released over nothing and was silently discarded — the gesture
+        everyone reaches for first did nothing at all, with no reason given.
+
+        Dropping does not return the cases outright. It opens the same split dialog a click
+        opens, because "take it out" almost never means "take all of it out", and a drag that
+        silently emptied a line would be a destructive action triggered by a slip of the mouse.
+      */}
+      {returningAllocation && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-amber-accent bg-amber-accent/5">
+          <span className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-navy-900 shadow-lg">
+            Release to choose how many cases go back
+          </span>
+        </div>
+      )}
       {/* Only appears once something has actually closed, so the ordinary board is unchanged.
           A permanently visible switch for a state most weeks do not have is just noise. */}
       {closedCount > 0 ? (
