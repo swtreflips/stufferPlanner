@@ -27,6 +27,7 @@ function toRole(orgType: string | null | undefined, orgRole: string | null | und
 
 interface Row {
   id: string
+  must_change_password?: boolean | null
   full_name: string | null
   org_role: string | null
   organization_id: string | null
@@ -44,10 +45,12 @@ function toProfile(row: Row, emailForSelf: string | null, selfId: string | null)
     role: toRole(row.organizations?.type, row.org_role),
     supplierId: row.organization_id,
     supplierName: row.organizations?.name ?? null,
+    mustChangePassword: row.must_change_password ?? false,
   }
 }
 
-const SELECT = 'id, full_name, org_role, organization_id, organizations(name, type)'
+const SELECT =
+  'id, full_name, org_role, organization_id, must_change_password, organizations(name, type)'
 
 export function createSupabaseProfileRepo(): ProfileRepo {
   return {

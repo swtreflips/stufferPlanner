@@ -58,7 +58,6 @@ export default function AccountMenu() {
   const subtitle =
     user.role === 'factory' ? (user.supplierName ?? ROLE_LABELS.factory) : ROLE_LABELS[user.role]
 
-  const canOpenSettings = user.role === 'internal' || user.role === 'admin'
 
   return (
     <div className="relative" ref={menuRef}>
@@ -109,30 +108,20 @@ export default function AccountMenu() {
             Profile
           </button>
 
-          {/* Settings is where the week's ERP data is loaded, which is administration rather
-              than planning — so it lives behind this menu instead of on the board. A supplier
-              keeps the inert version: there is nothing there for them, and a live link to a
-              page that would bounce them is worse than no link. */}
-          {canOpenSettings ? (
-            <Link
-              to="/settings"
-              role="menuitem"
-              onClick={() => setOpen(false)}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-navy-700 transition-colors hover:bg-navy-100"
-            >
-              <Settings className="w-[15px] h-[15px]" />
-              Settings
-            </Link>
-          ) : (
-            <button
-              type="button"
-              disabled
-              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-navy-400 cursor-not-allowed"
-            >
-              <Settings className="w-[15px] h-[15px]" />
-              Settings
-            </button>
-          )}
+          {/* Live for EVERYONE. It started internal-only, because everything on that page was
+              administration — the weekly ERP load, closed lines, container limits. Then it
+              became where a supplier replaces the temporary password they were handed, which
+              is the most ordinary account action there is. The page itself decides which
+              sections each person sees; the link no longer has to. */}
+          <Link
+            to="/settings"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-navy-700 transition-colors hover:bg-navy-100"
+          >
+            <Settings className="w-[15px] h-[15px]" />
+            Settings
+          </Link>
 
           <div className="my-1 border-t border-navy-100" />
           <button

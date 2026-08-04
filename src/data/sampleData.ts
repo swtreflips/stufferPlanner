@@ -23,6 +23,7 @@ export const sampleProfiles: Profile[] = [
     role: 'admin',
     supplierId: null,
     supplierName: null,
+    mustChangePassword: false,
   },
   {
     id: 'user-internal',
@@ -31,6 +32,7 @@ export const sampleProfiles: Profile[] = [
     role: 'internal',
     supplierId: null,
     supplierName: null,
+    mustChangePassword: false,
   },
   {
     id: 'user-michelle',
@@ -39,6 +41,7 @@ export const sampleProfiles: Profile[] = [
     role: 'factory',
     supplierId: 'sup-apple',
     supplierName: 'Apple Paper',
+    mustChangePassword: false,
   },
   {
     id: 'user-prasad',
@@ -47,6 +50,7 @@ export const sampleProfiles: Profile[] = [
     role: 'factory',
     supplierId: 'sup-pineapple',
     supplierName: 'Pineapple Paper',
+    mustChangePassword: false,
   },
 ]
 

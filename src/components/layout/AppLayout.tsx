@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
   DndContext,
   DragOverlay,
@@ -156,6 +157,24 @@ export default function AppLayout() {
           // fault. Say which.
           <div className="px-6 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700">
             Could not load planner data: {loadError}
+          </div>
+        )}
+        {/* The account is still on the password internal read out at onboarding. Left alone, a
+            temporary password becomes a permanent one — nobody remembers months later which
+            accounts were handed over and never changed. Persistent rather than dismissable for
+            that reason, but it never blocks the board: someone mid-shift should not be stopped
+            from planning to deal with an account chore. */}
+        {user.mustChangePassword && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-accent/30 bg-amber-accent/5 px-6 py-2">
+            <span className="text-xs text-navy-700">
+              You are still using the temporary password you were given. Set one only you know.
+            </span>
+            <Link
+              to="/settings"
+              className="rounded-lg border border-navy-200 bg-white px-2.5 py-1 text-[10px] font-mono uppercase tracking-widest text-navy-700 transition-colors hover:bg-navy-100"
+            >
+              Change it
+            </Link>
           </div>
         )}
         <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-navy-200">

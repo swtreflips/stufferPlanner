@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import AccountMenu from '../components/layout/AccountMenu'
 import PoSyncPanel from '../features/sync/PoSyncPanel'
 import ClosedLinesPanel from '../features/sync/ClosedLinesPanel'
 import CapacityPanel from '../features/settings/CapacityPanel'
+import PasswordPanel from '../features/settings/PasswordPanel'
 import { useAuth } from '../auth/AuthProvider'
 import logoUrl from '../assets/logo.png'
 
@@ -38,9 +39,19 @@ export default function SettingsPage() {
   */
   const [syncedAt, setSyncedAt] = useState(0)
 
-  if (user.role !== 'internal' && user.role !== 'admin') {
-    return <Navigate to="/" replace />
-  }
+  /*
+    NO LONGER AN INTERNAL-ONLY PAGE.
+
+    It began as one because everything on it was administration. Then suppliers needed somewhere
+    to replace the temporary password they were handed at onboarding, and that is the most
+    ordinary account action there is — sending them somewhere else for it, or leaving them
+    without a way to do it at all, would be the strange choice.
+
+    So the ROUTE is open and each SECTION carries its own audience. A supplier sees exactly one
+    section; internal sees four. The gate moved from the door to the rooms, which is also why
+    the sections below read `isInternal` rather than the page returning early.
+  */
+  const isInternal = user.role === 'internal' || user.role === 'admin'
 
   return (
     <div className="h-screen w-screen flex flex-col bg-navy-50">
@@ -63,30 +74,44 @@ export default function SettingsPage() {
           <div>
             <h1 className="text-xl font-semibold text-navy-900">Settings</h1>
             <p className="mt-1 text-sm text-navy-500">
-              Internal administration. Nothing here is visible to suppliers.
+              {isInternal
+                ? 'Your account, and the settings that shape the board for everyone.'
+                : 'Your account.'}
             </p>
           </div>
 
+          {/* First, and for everyone: the one thing on this page a supplier came here to do. */}
           <Section
-            title="PO data"
-            description="The weekly export from NetSuite. Every upload is previewed before anything is written."
+            title="Password"
+            description="Replace the password you were given with one only you know."
           >
-            <PoSyncPanel onApplied={() => setSyncedAt((n) => n + 1)} />
+            <PasswordPanel />
           </Section>
 
-          <Section
-            title="Closed lines"
-            description="PO lines that left the export. The reason is the sync's guess until someone confirms it."
-          >
-            <ClosedLinesPanel refreshToken={syncedAt} />
-          </Section>
+          {isInternal && (
+            <>
+              <Section
+                title="PO data"
+                description="The weekly export from NetSuite. Every upload is previewed before anything is written."
+              >
+                <PoSyncPanel onApplied={() => setSyncedAt((n) => n + 1)} />
+              </Section>
 
-          <Section
-            title="Container capacity"
-            description="How much CBM each container type actually takes. Adjust as loading experience says otherwise."
-          >
-            <CapacityPanel canEdit />
-          </Section>
+              <Section
+                title="Closed lines"
+                description="PO lines that left the export. The reason is the sync's guess until someone confirms it."
+              >
+                <ClosedLinesPanel refreshToken={syncedAt} />
+              </Section>
+
+              <Section
+                title="Container capacity"
+                description="How much CBM each container type actually takes. Adjust as loading experience says otherwise."
+              >
+                <CapacityPanel canEdit />
+              </Section>
+            </>
+          )}
         </div>
       </main>
     </div>
