@@ -8,6 +8,7 @@ import {
   getCapacityConfig,
   maxCasesWithinCeiling,
 } from '../../data/containerCapacity'
+import SplitQuantityField from './SplitQuantityField'
 
 /** One metric row in the before → after container projection. */
 function StateRow({
@@ -420,13 +421,40 @@ export default function AllocationDialog() {
           ) : null}
 
           <form onSubmit={handleSubmit} className="px-5 py-4 border-t border-navy-100 space-y-3">
+            {/*
+              EDIT IS A SPLIT, NOT A NUMBER.
+
+              Reducing a line IS moving cases back to the master list, and which of those two
+              figures a person has in their head depends on where they are standing — "can I
+              still fit 250 more" at the container, "I need 150 back" at the grid. One input made
+              everybody do the subtraction themselves.
+
+              Create stays a single field: there is nothing to split yet, only an amount to take.
+            */}
+            {isEdit ? (
+              <div className={container ? '' : 'opacity-40 pointer-events-none'}>
+                <SplitQuantityField
+                  total={existingQty}
+                  keep={quantity}
+                  onKeepChange={setQuantity}
+                  max={Number.isFinite(effectiveCap) ? effectiveCap : existingQty}
+                  keepLabel={`Keep in ${container?.code ?? 'container'}`}
+                  moveLabel="Back to master list"
+                  drawLabel="Take from master list"
+                  disabled={!container}
+                />
+                {quantity === 0 ? (
+                  <p className="mt-1.5 text-[10px] text-coral-accent">
+                    Keeping none removes this line from the container entirely.
+                  </p>
+                ) : null}
+              </div>
+            ) : (
             <label className={`block ${container ? '' : 'opacity-40 pointer-events-none'}`}>
               <span className="block text-[10px] font-mono uppercase tracking-widest text-navy-400 mb-1.5">
-                {isEdit
-                  ? 'Cases to allocate (set to 0 to remove)'
-                  : existing
-                    ? `Cases to add (on top of ${existingQty} already here)`
-                    : 'Cases to allocate'}
+                {existing
+                  ? `Cases to add (on top of ${existingQty} already here)`
+                  : 'Cases to allocate'}
               </span>
               <input
                 type="number"
@@ -438,6 +466,10 @@ export default function AllocationDialog() {
                 className="w-full px-3 py-2 rounded-lg border border-navy-200 bg-navy-50 text-sm text-navy-900 focus:outline-none focus:border-amber-accent disabled:cursor-not-allowed"
                 autoFocus={!isPickingContainer}
               />
+            </label>
+            )}
+
+            <div>
               {container && qtyCap === 0 && !isEdit ? (
                 <div className="mt-1 text-[10px] text-coral-accent">
                   No cases available. Empty a draft container holding this PO,
@@ -458,7 +490,7 @@ export default function AllocationDialog() {
               {error ? (
                 <div className="mt-1 text-[10px] text-coral-accent">{error}</div>
               ) : null}
-            </label>
+            </div>
             <div className="flex justify-between gap-2 pt-2">
               {isEdit && existing ? (
                 <button
