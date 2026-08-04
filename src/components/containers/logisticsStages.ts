@@ -128,14 +128,16 @@ export function isStalled(c: Parameters<typeof stageEnteredAt>[0]): boolean {
 /**
  * What this container is waiting for and how long — the single call a card makes.
  *
- * Returns null when there is nothing to say, which folds three separate "should this show?"
- * questions into one place rather than leaving them scattered through JSX:
+ * Null only when there is genuinely nothing to say: the stage owes nothing (shipped, or a draft),
+ * or the stamp that would date it is missing.
  *
- *   · nothing is owed        shipped, or a draft with no stamps at all
- *   · nothing is knowable    the stamp is missing
- *   · nothing has happened   less than a day, and nobody could reasonably have acted yet.
- *                            "0d awaiting booking" on something committed this morning is a
- *                            reproach for not having done the impossible.
+ * `days` MAY BE ZERO, and the caller is expected to render that as the label alone. This first
+ * suppressed the whole mark under a day, on the reasoning that "0d awaiting schedule" reproaches
+ * someone for not having done the impossible. True of the NUMBER, wrong about the LABEL — it
+ * meant a container booked an hour ago showed nothing at all, so the one moment anybody looks
+ * for this feature is the one moment it is invisible, and there was no sign the clock had
+ * started. What it is waiting for is worth saying immediately; how long only becomes worth
+ * saying once there is a day to count.
  */
 export function waitOf(
   c: Parameters<typeof stageEnteredAt>[0],
@@ -144,7 +146,7 @@ export function waitOf(
   if (!label) return null
 
   const days = daysInStage(c)
-  if (days === null || days < 1) return null
+  if (days === null) return null
 
   return { days, label, stalled: isStalled(c) }
 }

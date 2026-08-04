@@ -249,8 +249,11 @@ export default function ContainerCard({ container }: Props) {
               }`}
             >
               <Clock className="h-3 w-3 shrink-0" />
+              {/* The number appears once there is a whole day to count. Before that the label
+                  alone carries it — saying what is owed from the moment it is owed, without
+                  putting a "0d" on something nobody could have acted on yet. */}
               <span className="truncate">
-                {wait.days}d {wait.label}
+                {wait.days > 0 ? `${wait.days}d ${wait.label}` : wait.label}
               </span>
             </div>
           ) : null}
