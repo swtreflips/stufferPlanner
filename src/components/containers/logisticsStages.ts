@@ -35,19 +35,23 @@ export const stageOf = (logisticsStatus: LogisticsStatus | null): LogisticsStatu
 
 /*
   ─────────────────────────────────────────────────────────────────────────────
-  STALENESS — the reason stage segmentation is worth building at all.
+  AGE IN THE CURRENT STAGE — the reason stage segmentation is worth building.
 
-  The count of containers at each stage is not the interesting number. The interesting number is
-  HOW LONG they have been sitting there. Booking and scheduling are done by other people, and
-  the whole point of seeing the pipeline is to find the ones nobody has moved — so somebody can
-  be chased, or a forwarder who cannot make the window can be swapped out before it costs a
-  sailing.
+  The count of containers at each stage is not the interesting number. How long they have been
+  sitting there is. Booking and scheduling are somebody else's move, so the point of seeing the
+  pipeline is to find what has stopped — to chase whoever is holding it, or take the freight off
+  a forwarder who cannot make the window.
 
-  So everything below is about age, not volume.
+  THERE IS NO THRESHOLD, DELIBERATELY. This is a funnel and the job is to empty it as fast as
+  possible; there is no number of days that is "fine". A cliff at seven days would say a
+  six-day-old container needs nothing, and — worse — a colour that only appears past an arbitrary
+  line is a colour people learn to wait for and then ignore. The age itself is the signal:
+  longer is worse, continuously, and sorting a stage by it puts the worst at the top without
+  anyone having to agree on where "late" begins.
   ─────────────────────────────────────────────────────────────────────────────
 */
 
-const DAY_MS = 86_400_000
+const HOUR_MS = 3_600_000
 
 /**
  * WHAT EACH STAGE IS WAITING FOR.
@@ -63,26 +67,6 @@ export const AWAITING_LABELS: Record<LogisticsStatus, string | null> = {
   booked: 'awaiting schedule',
   scheduled: 'awaiting departure',
   shipped: null,
-}
-
-/**
- * Days past which a wait at each stage is worth asking about.
- *
- * ONE NUMBER PER STAGE, not one overall. Waiting on a booking is not the same as waiting on a
- * vessel: a single threshold either calls a four-day booking gap fine, or flags a seven-day wait
- * for a departure that may be entirely normal. Both errors send someone chasing the wrong thing.
- *
- * STARTING GUESSES. They live here, together, so they can be moved once the real rhythms are
- * known — which is the only way anyone will find out what these should be.
- *
- * `shipped` is Infinity rather than a large number: it cannot go stale by definition, and saying
- * so in the type is better than choosing a figure nobody will ever reach.
- */
-export const STALE_AFTER_DAYS: Record<LogisticsStatus, number> = {
-  committed: 3,
-  booked: 7,
-  scheduled: 14,
-  shipped: Infinity,
 }
 
 /** When the container entered the stage it is currently in. */
@@ -105,48 +89,50 @@ export function stageEnteredAt(c: {
   }
 }
 
-/** Whole days waiting at the current stage; null when the stamp is missing. */
-export function daysInStage(c: Parameters<typeof stageEnteredAt>[0]): number | null {
+/** Milliseconds waiting at the current stage; null when the stamp is missing. */
+export function msInStage(c: Parameters<typeof stageEnteredAt>[0]): number | null {
   const at = stageEnteredAt(c)
   if (!at) return null
-  return Math.floor((Date.now() - new Date(at).getTime()) / DAY_MS)
+  return Math.max(0, Date.now() - new Date(at).getTime())
 }
 
 /**
- * Waiting long enough to be worth a phone call, judged against this stage's own patience.
+ * "4h" · "1d 4h" · "6d" — the age, at the resolution it is actually read at.
  *
- * SHIPPED IS NEVER STALE. It is the end of the line — a container that sailed three months ago
- * is finished, not neglected, and flagging it would bury the ones that actually need chasing
- * under a growing pile of completed work. The Infinity threshold makes that fall out rather
- * than needing a special case.
+ * HOURS MATTER on the first day and stop mattering after it. A container booked this morning is
+ * not the same as one booked last night, and rounding both to "0d" threw away the only
+ * difference there was; but nobody chasing a six-day-old booking cares that it is six days and
+ * eleven hours. So hours show until there is a day, then alongside it, and drop out once they
+ * are zero.
  */
-export function isStalled(c: Parameters<typeof stageEnteredAt>[0]): boolean {
-  const days = daysInStage(c)
-  return days !== null && days >= STALE_AFTER_DAYS[stageOf(c.logisticsStatus)]
+export function formatStageAge(ms: number): string {
+  const totalHours = Math.floor(ms / HOUR_MS)
+  const days = Math.floor(totalHours / 24)
+  const hours = totalHours % 24
+
+  if (days === 0) return `${totalHours}h`
+  if (hours === 0) return `${days}d`
+  return `${days}d ${hours}h`
 }
 
 /**
- * What this container is waiting for and how long — the single call a card makes.
+ * What this container is waiting for, and how long it has been waiting.
  *
- * Null only when there is genuinely nothing to say: the stage owes nothing (shipped, or a draft),
- * or the stamp that would date it is missing.
+ * Null only when there is genuinely nothing to say: the stage owes nothing (shipped, or a
+ * draft), or the stamp that would date it is missing.
  *
- * `days` MAY BE ZERO, and the caller is expected to render that as the label alone. This first
- * suppressed the whole mark under a day, on the reasoning that "0d awaiting schedule" reproaches
- * someone for not having done the impossible. True of the NUMBER, wrong about the LABEL — it
- * meant a container booked an hour ago showed nothing at all, so the one moment anybody looks
- * for this feature is the one moment it is invisible, and there was no sign the clock had
- * started. What it is waiting for is worth saying immediately; how long only becomes worth
- * saying once there is a day to count.
+ * The age is a formatted string rather than a number because there is no threshold to compare
+ * against — nothing downstream needs to decide whether it is "too long", only to show it and to
+ * sort by it, and sorting uses `msInStage` directly.
  */
 export function waitOf(
   c: Parameters<typeof stageEnteredAt>[0],
-): { days: number; label: string; stalled: boolean } | null {
+): { age: string; label: string } | null {
   const label = AWAITING_LABELS[stageOf(c.logisticsStatus)]
   if (!label) return null
 
-  const days = daysInStage(c)
-  if (days === null) return null
+  const ms = msInStage(c)
+  if (ms === null) return null
 
-  return { days, label, stalled: isStalled(c) }
+  return { age: formatStageAge(ms), label }
 }

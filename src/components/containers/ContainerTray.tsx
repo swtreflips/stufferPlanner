@@ -6,7 +6,13 @@ import { usePlannerStore } from '../../store/plannerStore'
 import ContainerCard from './ContainerCard'
 import AddContainerDialog from './AddContainerDialog'
 import { CONTAINER_COL, LINE_GRID, LINE_COLUMNS } from './allocationColumns'
-import { STAGES, STAGE_LABELS, daysInStage, isStalled, stageOf } from './logisticsStages'
+import {
+  STAGES,
+  STAGE_LABELS,
+  formatStageAge,
+  msInStage,
+  stageOf,
+} from './logisticsStages'
 import TrayControls, {
   type StageStat,
   type TrayCounts,
@@ -82,19 +88,19 @@ export default function ContainerTray() {
 
     The age is what makes this worth showing. Booking and scheduling are done by other people, so
     the question is not "how many are booked" but "which of these has nobody touched" — that is
-    the one to chase a forwarder about, or take off them.
+    the one to chase a forwarder about, or take off them. No threshold decides that; the age is
+    shown and the stage sorts by it, so the worst is simply at the top.
   */
   const counts: TrayCounts = useMemo(() => {
     const byStage = Object.fromEntries(
       STAGES.map((s) => {
         const inStage = committed.filter((c) => stageOf(c.logisticsStatus) === s)
-        const ages = inStage.map((c) => daysInStage(c)).filter((d): d is number => d !== null)
+        const ages = inStage.map((c) => msInStage(c)).filter((v): v is number => v !== null)
         return [
           s,
           {
             count: inStage.length,
-            oldestDays: ages.length ? Math.max(...ages) : null,
-            stalled: inStage.filter(isStalled).length,
+            oldestAge: ages.length ? formatStageAge(Math.max(...ages)) : null,
           },
         ]
       }),
@@ -120,7 +126,7 @@ export default function ContainerTray() {
     // there, and the thing to act on should not be somewhere in the middle of the list.
     return committed
       .filter((c) => stageOf(c.logisticsStatus) === stage)
-      .sort((a, b) => (daysInStage(b) ?? -1) - (daysInStage(a) ?? -1))
+      .sort((a, b) => (msInStage(b) ?? -1) - (msInStage(a) ?? -1))
   }, [committed, view, stage])
 
   const visibleDrafts = view === 'committed' ? [] : drafts

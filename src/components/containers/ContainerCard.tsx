@@ -9,7 +9,6 @@ import {
   PROGRESS_STAGES,
   STAGE_LABELS,
   STAGES,
-  STALE_AFTER_DAYS,
   stageOf,
   waitOf,
 } from './logisticsStages'
@@ -67,7 +66,7 @@ export default function ContainerCard({ container }: Props) {
   // clicking a button. Roll back via the Logistics dialog first.
   const uncommitDisabled = logisticsStage !== 'committed'
 
-  // Null for drafts, for shipped containers and for anything under a day old — see waitOf.
+  // Null for drafts and for shipped containers — nothing is owed at either. See waitOf.
   const wait = isCommitted ? waitOf(container) : null
 
   const [confirming, setConfirming] = useState(false)
@@ -239,22 +238,15 @@ export default function ContainerCard({ container }: Props) {
           */}
           {wait ? (
             <div
-              title={
-                wait.stalled
-                  ? `${wait.days} days ${wait.label} — past the ${STALE_AFTER_DAYS[logisticsStage]}-day mark for this stage`
-                  : `${wait.days} days ${wait.label}`
-              }
-              className={`flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest ${
-                wait.stalled ? 'font-bold text-coral-accent' : 'text-navy-400'
-              }`}
+              title={`${STAGE_LABELS[logisticsStage]} ${wait.age} ago · ${wait.label}`}
+              className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-navy-500"
             >
-              <Clock className="h-3 w-3 shrink-0" />
-              {/* The number appears once there is a whole day to count. Before that the label
-                  alone carries it — saying what is owed from the moment it is owed, without
-                  putting a "0d" on something nobody could have acted on yet. */}
-              <span className="truncate">
-                {wait.days > 0 ? `${wait.days}d ${wait.label}` : wait.label}
-              </span>
+              <Clock className="h-3 w-3 shrink-0 text-navy-400" />
+              {/* The age leads, and is bold, because it is the thing being scanned for. No
+                  colour changes at any point: there is no threshold, so there is no line to
+                  cross — longer is simply worse, and the number says how much. */}
+              <span className="font-bold text-navy-800">{wait.age}</span>
+              <span className="truncate text-navy-400">{wait.label}</span>
             </div>
           ) : null}
 

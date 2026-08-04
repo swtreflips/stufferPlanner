@@ -1,5 +1,5 @@
 import type { LogisticsStatus } from '../../types/container'
-import { STAGE_LABELS, STAGES, STALE_AFTER_DAYS } from './logisticsStages'
+import { STAGE_LABELS, STAGES } from './logisticsStages'
 
 /**
  * The tray's status filter, stage filter and totals — one control, in the footer.
@@ -25,12 +25,11 @@ import { STAGE_LABELS, STAGES, STALE_AFTER_DAYS } from './logisticsStages'
 
 export type TrayView = 'all' | 'drafts' | 'committed'
 
-/** Per-stage: how many, how long the worst one has waited, and how many are past patience. */
+/** Per-stage: how many are sitting there, and how long the worst one has been. */
 export interface StageStat {
   count: number
-  /** Days the longest-waiting container at this stage has been there. */
-  oldestDays: number | null
-  stalled: number
+  /** Formatted age of the longest-waiting container here — "4h", "1d 4h", "6d". */
+  oldestAge: string | null
 }
 
 export interface TrayCounts {
@@ -93,7 +92,6 @@ export default function TrayControls({
           {STAGES.map((s) => (
             <StageChip
               key={s}
-              stage={s}
               label={STAGE_LABELS[s]}
               stat={counts.byStage[s]}
               active={stage === s}
@@ -164,34 +162,31 @@ function Segment({
 /**
  * One stage: how many are sitting there, and how long the worst one has been.
  *
- * THE AGE IS THE POINT, not the count. Booking and scheduling are done by other people, so the
- * question this row exists to answer is "who has stopped moving" — the container that has been
- * booked for eleven days is the one to ring a forwarder about, or to take off them. A count
- * alone cannot say that; three booked containers might all be from yesterday.
+ * THE AGE IS THE POINT, not the count. Booking and scheduling are somebody else's move, so the
+ * question this row answers is "who has stopped" — three booked containers might all be from
+ * yesterday, or one of them might have been sitting for a week, and the count cannot tell them
+ * apart.
  *
- * Anything past this stage's own patience turns coral and states how many. Coral rather than the
- * module accent because this is the one thing here that wants acting on — everything else on
- * this control is navigation.
+ * No threshold and no alarm colour. This is a funnel; every stage wants emptying as fast as it
+ * can be, so there is no age at which something becomes fine. Selecting the stage sorts by age
+ * and puts the worst on top, which needs no one to agree where "late" starts.
  *
  * A stage with nothing in it stays VISIBLE, because "nothing shipped yet" is a real answer and
  * hiding it would make the pipeline look shorter than it is. It is UNCLICKABLE, because the only
  * thing it could do is empty the tray.
  */
 function StageChip({
-  stage,
   label,
   stat,
   active,
   onClick,
 }: {
-  stage: LogisticsStatus
   label: string
   stat: StageStat
   active: boolean
   onClick: () => void
 }) {
   const empty = stat.count === 0
-  const alarm = stat.stalled > 0
 
   return (
     <button
@@ -199,22 +194,14 @@ function StageChip({
       onClick={onClick}
       disabled={empty}
       aria-pressed={active}
-      title={
-        empty
-          ? `Nothing ${label.toLowerCase()} yet`
-          : alarm
-            ? `${stat.stalled} waiting ${STALE_AFTER_DAYS[stage]}+ days — longest ${stat.oldestDays}d`
-            : `Longest here: ${stat.oldestDays}d`
-      }
+      title={empty ? `Nothing ${label.toLowerCase()} yet` : `Longest here: ${stat.oldestAge}`}
       className={[
         'flex items-center gap-1.5 rounded px-1.5 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors',
         empty
           ? 'cursor-default text-navy-300'
           : active
             ? 'bg-navy-900 text-navy-50'
-            : alarm
-              ? 'text-coral-accent hover:bg-coral-accent/10'
-              : 'text-navy-500 hover:bg-navy-100 hover:text-navy-800',
+            : 'text-navy-500 hover:bg-navy-100 hover:text-navy-800',
       ].join(' ')}
     >
       <span
@@ -224,19 +211,13 @@ function StageChip({
             ? 'border-navy-200 bg-transparent'
             : active
               ? 'border-navy-50 bg-navy-50'
-              : alarm
-                ? 'border-coral-accent bg-coral-accent'
-                : 'border-navy-300 bg-transparent',
+              : 'border-navy-300 bg-transparent',
         ].join(' ')}
       />
       <span className="truncate">{label}</span>
       <span className="ml-auto flex items-baseline gap-1 tabular-nums">
-        {/* The wait, when there is one worth naming. Suppressed on shipped, which is finished
-            rather than pending, and on anything that only arrived today. */}
-        {!empty && stat.oldestDays !== null && stat.oldestDays > 0 ? (
-          <span className={active ? 'text-navy-300' : alarm ? '' : 'text-navy-300'}>
-            {stat.oldestDays}d
-          </span>
+        {!empty && stat.oldestAge ? (
+          <span className={active ? 'text-navy-300' : 'text-navy-400'}>{stat.oldestAge}</span>
         ) : null}
         <span className="font-bold">{stat.count}</span>
       </span>
