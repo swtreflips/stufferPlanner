@@ -57,7 +57,6 @@ export default function AppLayout() {
   const openPoCount = usePlannerStore((s) => s.masterItems.length)
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
   const openCsvUploadDialog = usePlannerStore((s) => s.openCsvUploadDialog)
-  const moveAllocation = usePlannerStore((s) => s.moveAllocation)
   const acquireLock = usePlannerStore((s) => s.acquireLock)
   const releaseLock = usePlannerStore((s) => s.releaseLock)
   const hydrate = usePlannerStore((s) => s.hydrate)
@@ -158,8 +157,19 @@ export default function AppLayout() {
         releaseForActive(activeData)
         return
       }
-      void moveAllocation(activeData.allocationId, overData.containerId)
-      releaseForActive(activeData)
+      /*
+        Opens the dialog with this container preselected instead of moving the whole line.
+
+        A drop used to move EVERYTHING, silently — which made "move 500 of these 3500 across"
+        impossible by drag and gave no chance to reconsider a mis-drop. The gesture now says
+        WHERE and the dialog says HOW MANY, which is the same division of labour as every other
+        path. The lock stays held; the dialog releases it on close.
+      */
+      openAllocationDialog({
+        kind: 'edit',
+        allocationId: activeData.allocationId,
+        toContainerId: overData.containerId,
+      })
       return
     }
 

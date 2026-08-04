@@ -107,7 +107,22 @@ interface PlannerStore {
   addAllocation(input: AddAllocationArgs): Promise<Allocation>
   updateAllocation(id: string, quantity: number): Promise<void>
   removeAllocation(id: string): Promise<void>
-  moveAllocation(allocationId: string, newContainerId: string): Promise<void>
+  /**
+   * Split a line: leave `keep` where it is and send the remainder to `toContainerId`, or back to
+   * the master pool when that is null.
+   *
+   * The one operation behind every destination the allocation dialog offers. It replaced
+   * `moveAllocation`, which moved a whole line between containers and could not express "move
+   * 500 of the 3500" — the thing a destination picker plus a quantity necessarily means.
+   *
+   * Returning to the pool needs no deposit step: `availableQty` derives availability by
+   * subtracting draft allocations, so reducing this one hands the cases back by arithmetic.
+   */
+  splitAllocation(
+    allocationId: string,
+    keep: number,
+    toContainerId: string | null,
+  ): Promise<void>
 
   // Factory-owned master-data edits. Inline grid + CSV upload both route here.
   updateMasterCargoReady(id: string, isoDate: string): Promise<void>
@@ -359,6 +374,55 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       set((s) => ({ allocations: s.allocations.filter((a) => a.id !== id) }))
     },
 
+    async splitAllocation(allocationId, keep, toContainerId) {
+      const allocation = get().allocations.find((a) => a.id === allocationId)
+      if (!allocation) return
+
+      /*
+        BACK TO THE MASTER POOL is just this line getting smaller. Nothing needs depositing —
+        availableQty subtracts draft allocations, so the cases are free the moment this one
+        shrinks. Delegating to the existing actions rather than writing a second reduction path
+        keeps the CBM ceiling check in one place, and lets `keep` exceed the current quantity
+        (drawing more IN) without a special case.
+      */
+      if (toContainerId === null) {
+        if (keep <= 0) return get().removeAllocation(allocationId)
+        return get().updateAllocation(allocationId, keep)
+      }
+
+      const moved = allocation.quantity - keep
+      if (moved <= 0) return
+
+      const item = get().masterItems.find((m) => m.id === allocation.masterItemId)
+      const target = get().containers.find((c) => c.id === toContainerId)
+      if (!item || !target || target.status !== 'draft') return
+      if (item.shipTo !== target.destination) return
+      if (item.supplierId !== target.supplierId) return
+
+      /*
+        Checked BEFORE anything is written. These are two round trips with no transaction around
+        them, so a ceiling rejection discovered halfway would leave the cases having left the
+        source and never arrived — the one outcome worse than refusing the move.
+      */
+      const projected = get().containerCbm(toContainerId) + item.cbmPerCase * moved
+      if (exceedsCeiling(target.type, projected)) {
+        const config = getCapacityConfig(target.type)
+        throw new CbmCeilingError(
+          `Moving ${moved} cases would exceed ${target.code}'s ${target.type} structural ceiling of ${config?.maxCbm} m³.`,
+        )
+      }
+
+      // Source first, so the cases are available before they are claimed again.
+      if (keep <= 0) await get().removeAllocation(allocationId)
+      else await get().updateAllocation(allocationId, keep)
+
+      await get().addAllocation({
+        containerId: toContainerId,
+        masterItemId: allocation.masterItemId,
+        quantity: moved,
+      })
+    },
+
     async commitContainer(id, ofqReference) {
       const container = get().containers.find((c) => c.id === id)
       if (!container || container.status !== 'draft') return
@@ -541,53 +605,6 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       }))
     },
 
-    async moveAllocation(allocationId, newContainerId) {
-      const allocation = get().allocations.find((a) => a.id === allocationId)
-      if (!allocation) return
-      if (allocation.containerId === newContainerId) return
-      const target = get().containers.find((c) => c.id === newContainerId)
-      if (!target || target.status !== 'draft') return
-      const item = get().masterItems.find((m) => m.id === allocation.masterItemId)
-      if (!item) return
-      if (item.shipTo !== target.destination) return
-      if (item.supplierId !== target.supplierId) return
-
-      // Block moves that would push the target past its structural ceiling. The
-      // moved allocation is not yet in the target, so containerCbm(target)
-      // already accounts for any same-item allocation it will merge into.
-      const projected =
-        get().containerCbm(newContainerId) + item.cbmPerCase * allocation.quantity
-      if (exceedsCeiling(target.type, projected)) return
-
-      // Merge into an existing allocation in the target container if one exists
-      // for the same master item.
-      const existing = get().allocations.find(
-        (a) =>
-          a.id !== allocationId &&
-          a.containerId === newContainerId &&
-          a.masterItemId === allocation.masterItemId,
-      )
-      if (existing) {
-        const mergedQuantity = existing.quantity + allocation.quantity
-        await allocationRepo.update(existing.id, mergedQuantity)
-        await allocationRepo.delete(allocationId)
-        set((s) => ({
-          allocations: s.allocations
-            .filter((a) => a.id !== allocationId)
-            .map((a) =>
-              a.id === existing.id ? { ...a, quantity: mergedQuantity } : a,
-            ),
-        }))
-        return
-      }
-
-      await allocationRepo.updateContainerId(allocationId, newContainerId)
-      set((s) => ({
-        allocations: s.allocations.map((a) =>
-          a.id === allocationId ? { ...a, containerId: newContainerId } : a,
-        ),
-      }))
-    },
 
     acquireLock(resourceId, user) {
       const existing = get().locks[resourceId]
