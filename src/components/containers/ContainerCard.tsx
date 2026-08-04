@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useDndContext, useDroppable } from '@dnd-kit/core'
-import { CheckCircle2, FileCheck2, MapPin, RotateCcw, Trash2 } from 'lucide-react'
+import { CheckCircle2, Clock, FileCheck2, MapPin, RotateCcw, Trash2 } from 'lucide-react'
 import type { Container, LogisticsStatus } from '../../types/container'
 import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
-import { PROGRESS_STAGES, STAGE_LABELS, STAGES, stageOf } from './logisticsStages'
+import {
+  PROGRESS_STAGES,
+  STAGE_LABELS,
+  STAGES,
+  STALE_AFTER_DAYS,
+  stageOf,
+  waitOf,
+} from './logisticsStages'
 import { formatDate } from '../../utils/dateHelpers'
 import { exceedsCeiling, getCapacityConfig } from '../../data/containerCapacity'
 import AllocationCard from './AllocationCard'
@@ -59,6 +66,9 @@ export default function ContainerCard({ container }: Props) {
   // shipped) it represents a real operational state that can't be undone by
   // clicking a button. Roll back via the Logistics dialog first.
   const uncommitDisabled = logisticsStage !== 'committed'
+
+  // Null for drafts, for shipped containers and for anything under a day old — see waitOf.
+  const wait = isCommitted ? waitOf(container) : null
 
   const [confirming, setConfirming] = useState(false)
 
@@ -210,6 +220,38 @@ export default function ContainerCard({ container }: Props) {
             <div className="text-[10px] font-mono uppercase tracking-widest text-teal-accent truncate">
               {container.ofqReference}
               {container.committedAt ? ` · ${formatDate(container.committedAt)}` : ''}
+            </div>
+          ) : null}
+
+          {/*
+            WHAT THIS ONE IS WAITING FOR, AND FOR HOW LONG.
+
+            Booking and scheduling are somebody else's move, so a committed container can sit for
+            a week with nothing wrong on screen. This is the line that makes a stack of cards
+            readable as a follow-up queue: same position on every card, so the eye runs down the
+            rail and finds the worst without opening anything.
+
+            It names what is MISSING rather than the stage — the badge above already says
+            COMMITTED, and "11d awaiting schedule" is the sentence you would say on the phone.
+
+            Drafts and shipped containers get nothing: `waitOf` returns null for both, along with
+            anything under a day, because nobody could have acted yet.
+          */}
+          {wait ? (
+            <div
+              title={
+                wait.stalled
+                  ? `${wait.days} days ${wait.label} — past the ${STALE_AFTER_DAYS[logisticsStage]}-day mark for this stage`
+                  : `${wait.days} days ${wait.label}`
+              }
+              className={`flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest ${
+                wait.stalled ? 'font-bold text-coral-accent' : 'text-navy-400'
+              }`}
+            >
+              <Clock className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                {wait.days}d {wait.label}
+              </span>
             </div>
           ) : null}
 

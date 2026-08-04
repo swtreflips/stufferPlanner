@@ -93,6 +93,7 @@ export default function TrayControls({
           {STAGES.map((s) => (
             <StageChip
               key={s}
+              stage={s}
               label={STAGE_LABELS[s]}
               stat={counts.byStage[s]}
               active={stage === s}
@@ -168,7 +169,7 @@ function Segment({
  * booked for eleven days is the one to ring a forwarder about, or to take off them. A count
  * alone cannot say that; three booked containers might all be from yesterday.
  *
- * Anything past `STALE_AFTER_DAYS` turns coral and states how many. Coral rather than the
+ * Anything past this stage's own patience turns coral and states how many. Coral rather than the
  * module accent because this is the one thing here that wants acting on — everything else on
  * this control is navigation.
  *
@@ -177,11 +178,13 @@ function Segment({
  * thing it could do is empty the tray.
  */
 function StageChip({
+  stage,
   label,
   stat,
   active,
   onClick,
 }: {
+  stage: LogisticsStatus
   label: string
   stat: StageStat
   active: boolean
@@ -200,7 +203,7 @@ function StageChip({
         empty
           ? `Nothing ${label.toLowerCase()} yet`
           : alarm
-            ? `${stat.stalled} waiting ${STALE_AFTER_DAYS}+ days — longest ${stat.oldestDays}d`
+            ? `${stat.stalled} waiting ${STALE_AFTER_DAYS[stage]}+ days — longest ${stat.oldestDays}d`
             : `Longest here: ${stat.oldestDays}d`
       }
       className={[
