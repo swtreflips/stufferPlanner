@@ -212,5 +212,23 @@ export function createLocalContainerRepo(): ContainerRepo {
         shippedBy: null,
       }))
     },
+
+    /*
+      Local mode keeps the compiled-in limits. Returning {} leaves `setCapacities` a no-op and
+      containerCapacity.ts's fallbacks stand — which is right here: without a database there is
+      nowhere for an edited limit to live, and pretending otherwise would offer a settings panel
+      whose saves evaporate on reload.
+    */
+    async fetchTypeCapacities() {
+      return {}
+    },
+
+    async updateTypeCapacity() {
+      throw new Error('Editing container limits needs the database — set VITE_DATA_SOURCE=supabase.')
+    },
+
+    async fetchFill() {
+      return []
+    },
   }
 }

@@ -7,6 +7,7 @@ import type {
   ContainerType,
   LogisticsStatus,
 } from '../../types/container'
+import type { ContainerCapacity } from '../containerCapacity'
 import type { ContainerRepo, CreateContainerInput } from './types'
 
 /**
@@ -170,6 +171,63 @@ export function createSupabaseContainerRepo(): ContainerRepo {
         .single()
       if (error) fail('Failed to update capacity', error)
       return toContainer(data as unknown as Row)
+    },
+
+    /*
+      TYPE-WIDE LIMITS. Readable by every signed-in planner user — a factory draws fill bars and
+      needs the ceiling guard too — but writable only by internal, which RLS decides. Nothing
+      here re-checks it.
+    */
+    async fetchTypeCapacities() {
+      const { data, error } = await supabase
+        .from('planner_container_capacity')
+        .select('container_type, max_cbm, default_operational_cbm')
+      if (error) fail('Failed to load container capacities', error)
+
+      const out: Partial<Record<ContainerType, ContainerCapacity>> = {}
+      for (const row of data ?? []) {
+        const r = row as { container_type: string; max_cbm: number; default_operational_cbm: number }
+        out[r.container_type as ContainerType] = {
+          maxCbm: Number(r.max_cbm),
+          defaultOperationalCbm: Number(r.default_operational_cbm),
+        }
+      }
+      return out
+    },
+
+    async updateTypeCapacity(type, capacity) {
+      // updated_at / updated_by are stamped by the trigger from auth.uid(), never sent from here —
+      // the same reason the lifecycle RPCs take no actor id.
+      const { data, error } = await supabase
+        .from('planner_container_capacity')
+        .update({
+          max_cbm: capacity.maxCbm,
+          default_operational_cbm: capacity.defaultOperationalCbm,
+        })
+        .eq('container_type', type)
+        .select('max_cbm, default_operational_cbm')
+        .single()
+      if (error) fail(`Failed to update the ${type} limits`, error)
+
+      const r = data as unknown as { max_cbm: number; default_operational_cbm: number }
+      return { maxCbm: Number(r.max_cbm), defaultOperationalCbm: Number(r.default_operational_cbm) }
+    },
+
+    async fetchFill() {
+      const { data, error } = await supabase
+        .from('planner_container_fill')
+        .select('code, type, status, total_cbm')
+      if (error) fail('Failed to load container fill', error)
+
+      return (data ?? []).map((row) => {
+        const r = row as { code: string; type: string; status: string; total_cbm: number }
+        return {
+          code: r.code,
+          type: r.type as ContainerType,
+          status: r.status,
+          totalCbm: Number(r.total_cbm ?? 0),
+        }
+      })
     },
 
     /*

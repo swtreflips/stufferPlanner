@@ -22,6 +22,7 @@ import {
   CbmCeilingError,
   exceedsCeiling,
   getCapacityConfig,
+  setCapacities,
 } from '../data/containerCapacity'
 
 const LOCK_TTL_MS = 60_000
@@ -183,7 +184,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       // without the suppliers they belong to — renders blank supplier names that read as
       // missing data rather than a failed load.
       try {
-        const [masterItems, containers, allocations, suppliers, profiles, myOrgIds] =
+        const [masterItems, containers, allocations, suppliers, profiles, myOrgIds, capacities] =
           await Promise.all([
             masterItemRepo.fetchAll(),
             containerRepo.fetchAll(),
@@ -191,7 +192,17 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
             supplierRepo.fetchAll(),
             profileRepo.fetchAll(),
             profileRepo.fetchMyOrgIds(),
+            containerRepo.fetchTypeCapacities(),
           ])
+
+        /*
+          Installed BEFORE the board is set, so nothing draws a fill bar or runs a ceiling check
+          against the compiled-in fallbacks. Kept OUT of store state deliberately: capacity is
+          read synchronously by the allocation guards and by every card, and routing it through
+          a selector would re-render thirteen call sites for a value that changes twice a year.
+        */
+        setCapacities(capacities)
+
         /*
           supplierFilterId is seeded here, and it resets on every hydrate — hydrate reruns when
           the user changes, and carrying a previous account's focus across a sign-in would

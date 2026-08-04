@@ -441,9 +441,36 @@ volume planners arrange against. It is distinct from the container type's
 | 40GP | 67                  | 57                       |
 | 40HC | 76                  | 65                       |
 
-Type-level numbers live in one file
-([src/data/containerCapacity.ts](src/data/containerCapacity.ts)). `capacity_cbm`
-stays nullable: a future container type introduced without a configured
+> **These are now edited in the app, not in the file.** They live in
+> `planner_container_capacity` and are changed from **Settings → Container capacity** by any
+> internal user. The table above is the seeded starting point, not the current truth — query the
+> table for that.
+>
+> They stopped being constants once they became something *learned*. A 40HC holds 76 m³ of air;
+> what it holds of boxed product, stacked by the team at the far end, only emerges after loading
+> a few dozen — and recording that should not need a deploy.
+>
+> **Changes are never retroactive.** `capacity_cbm` is stamped onto a container at creation, so
+> raising the operational default changes what gets built from now on and leaves every arranged
+> plan exactly as its planner left it. A container already made is adjusted on its own card.
+> Verified: after raising 40HC from 65 to 68, three existing containers still read 65 and the
+> next one created read 68.
+>
+> **Lowering the structural max is the one edit that reaches backwards** — a container already
+> loaded past the new number starts reading as over capacity. Nothing breaks and nothing is
+> removed, but the panel names the affected containers before the save rather than after.
+>
+> [src/data/containerCapacity.ts](src/data/containerCapacity.ts) still holds these values, but as
+> **fallbacks** — `setCapacities()` overwrites them during store hydration. They remain because
+> every function in that file is synchronous and read from thirteen call sites including the
+> allocation guards: a read before hydration completes must return something sane, and returning
+> zero would briefly let the ceiling guard pass anything through.
+>
+> Read access is open to **every** signed-in planner user, not just internal. Factories draw fill
+> bars and need the ceiling guard too, so restricting reads would silently disable case-bounding
+> in their allocation dialog. Only internal can write, which RLS decides.
+
+`capacity_cbm` stays nullable: a future container type introduced without a configured
 capacity would store `null` and render no fill bar.
 
 ### Behaviour

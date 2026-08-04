@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import AccountMenu from '../components/layout/AccountMenu'
 import PoSyncPanel from '../features/sync/PoSyncPanel'
 import ClosedLinesPanel from '../features/sync/ClosedLinesPanel'
+import CapacityPanel from '../features/settings/CapacityPanel'
 import { useAuth } from '../auth/AuthProvider'
 import logoUrl from '../assets/logo.png'
 
@@ -78,6 +79,13 @@ export default function SettingsPage() {
             description="PO lines that left the export. The reason is the sync's guess until someone confirms it."
           >
             <ClosedLinesPanel refreshToken={syncedAt} />
+          </Section>
+
+          <Section
+            title="Container capacity"
+            description="How much CBM each container type actually takes. Adjust as loading experience says otherwise."
+          >
+            <CapacityPanel canEdit />
           </Section>
         </div>
       </main>

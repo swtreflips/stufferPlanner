@@ -8,6 +8,7 @@ import type {
 import type { Allocation } from '../../types/allocation'
 import type { Supplier } from '../../types/supplier'
 import type { Profile } from '../../types/profile'
+import type { ContainerCapacity } from '../containerCapacity'
 import type {
   Closure,
   ConfirmedReason,
@@ -90,11 +91,40 @@ export interface CreateContainerInput {
   displayOrder?: number
 }
 
+/** How full a container currently is — for the capacity panel's pre-save impact check. */
+export interface ContainerFill {
+  code: string
+  type: ContainerType
+  status: string
+  totalCbm: number
+}
+
 export interface ContainerRepo {
   fetchAll(): Promise<Container[]>
   create(input: CreateContainerInput): Promise<Container>
   delete(id: string): Promise<void>
+
+  /** The per-container operational cap, edited on the card. Not the type-wide limits below. */
   updateCapacity(id: string, capacityCbm: number): Promise<Container>
+
+  /*
+    TYPE-WIDE CBM LIMITS — planner_container_capacity.
+
+    Distinct from `updateCapacity` above, which moves ONE container's cap. These are the numbers
+    every future container of that type is born with, plus the structural ceiling allocation is
+    refused past.
+
+    Changing them is NOT retroactive: planner_containers.capacity_cbm is stamped at creation, so
+    raising the 40HC default leaves every existing plan exactly as its planner left it.
+  */
+  fetchTypeCapacities(): Promise<Partial<Record<ContainerType, ContainerCapacity>>>
+  updateTypeCapacity(
+    type: ContainerType,
+    capacity: ContainerCapacity,
+  ): Promise<ContainerCapacity>
+
+  /** Current fill of every container this user can see. Used to warn before LOWERING a ceiling. */
+  fetchFill(): Promise<ContainerFill[]>
 
   /*
     The lifecycle is named transitions, not a generic patch.
