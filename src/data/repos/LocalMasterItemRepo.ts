@@ -15,12 +15,8 @@ export function createLocalMasterItemRepo(): MasterItemRepo {
     async updateCbmPerCase(id, value) {
       rows = rows.map((r) => (r.id === id ? { ...r, cbmPerCase: value } : r))
     },
-    async commitQuantity(id, delta) {
-      rows = rows.map((r) =>
-        r.id === id
-          ? { ...r, committedQuantity: r.committedQuantity + delta }
-          : r,
-      )
+    async setCommittedQuantity(id, quantity) {
+      rows = rows.map((r) => (r.id === id ? { ...r, committedQuantity: quantity } : r))
     },
 
     /*

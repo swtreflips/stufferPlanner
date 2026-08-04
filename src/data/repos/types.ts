@@ -21,7 +21,15 @@ export interface MasterItemRepo {
   fetchAll(): Promise<MasterItem[]>
   updateCargoReady(id: string, isoDate: string): Promise<void>
   updateCbmPerCase(id: string, value: number): Promise<void>
-  commitQuantity(id: string, delta: number): Promise<void>
+  /**
+   * Set committed quantity ABSOLUTELY, never by delta.
+   *
+   * This was `commitQuantity(id, delta)` — a read-then-write applying +n on commit and -n on
+   * uncommit. Every delta had to fire exactly once, in order, and never interleave; when one
+   * did not, the error was permanent and silent. It is now computed from the allocations that
+   * are actually committed, so a write that is missed or repeated cannot drift anything.
+   */
+  setCommittedQuantity(id: string, quantity: number): Promise<void>
 
   /*
     THE WEEKLY ERP SNAPSHOT.

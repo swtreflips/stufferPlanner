@@ -203,19 +203,15 @@ export function createSupabaseMasterItemRepo(): MasterItemRepo {
     },
 
     // Committed quantity is internal-only — the column trigger rejects it from a factory.
-    async commitQuantity(id, delta) {
-      const { data, error } = await supabase
+    //
+    // ABSOLUTE, not a delta. The caller computes the correct total from the allocations that are
+    // actually committed and states it; there is no read-then-write here to lose a race with.
+    async setCommittedQuantity(id, quantity) {
+      const { error } = await supabase
         .from('planner_po_lines')
-        .select('committed_quantity')
+        .update({ committed_quantity: quantity })
         .eq('id', id)
-        .single()
-      if (error) throw new Error(`Failed to read committed quantity: ${error.message}`)
-      const next = (data?.committed_quantity ?? 0) + delta
-      const { error: upErr } = await supabase
-        .from('planner_po_lines')
-        .update({ committed_quantity: next })
-        .eq('id', id)
-      if (upErr) throw new Error(`Failed to commit quantity: ${upErr.message}`)
+      if (error) throw new Error(`Failed to set committed quantity: ${error.message}`)
     },
 
     /*

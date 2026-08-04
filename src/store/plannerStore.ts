@@ -162,6 +162,24 @@ interface PlannerStore {
   isLockedByMe(resourceId: string): boolean
   heldLocks(): LockEntry[]
 
+  /**
+   * Recompute `committedQuantity` from what is actually committed, and write back any drift.
+   *
+   * DERIVED, NOT ACCUMULATED. This was maintained by applying deltas — `+250` on commit, `-250`
+   * on uncommit — as a read-then-write with no transaction around it. Every one had to fire
+   * exactly once, in order, and never overlap. They did not: three PO lines were left holding
+   * 349 cases committed against zero containers, one of them at 149 of a 150 that had been
+   * reversed. A line at 100 of 100 committed then disappears from the grid, so the failure hides
+   * the evidence of itself.
+   *
+   * Truth is `Σ allocations sitting in COMMITTED containers`. Computing it means a missed or
+   * doubled write cannot drift anything, and running it twice changes nothing — which is what
+   * also makes it the repair for damage already done.
+   *
+   * Pass the ids worth checking, or nothing to sweep every line.
+   */
+  reconcileCommitted(masterItemIds?: string[]): Promise<void>
+
   availableQty(masterItemId: string): number
   containerCbm(containerId: string, excludeAllocationId?: string | null): number
   containersHoldingItem(masterItemId: string): Container[]
@@ -281,19 +299,40 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
     },
 
     async deleteContainer(id) {
+      const affected = get()
+        .allocations.filter((a) => a.containerId === id)
+        .map((a) => a.masterItemId)
+
       await allocationRepo.deleteByContainerId(id)
       await containerRepo.delete(id)
       set((s) => ({
         containers: s.containers.filter((c) => c.id !== id),
         allocations: s.allocations.filter((a) => a.containerId !== id),
       }))
+
+      /*
+        This reversed NOTHING before. Deleting a committed container removed the container and
+        its allocations while leaving their cases marked committed on the PO lines — with nothing
+        left pointing at them, and no way to notice, because a line at 100 of 100 committed drops
+        off the grid entirely.
+
+        Deleting a DRAFT needs no correction — draft allocations never counted toward committed
+        quantity, and `availableQty` subtracts them live, so the cases come back the moment the
+        rows go. Running the reconcile anyway costs one read and removes the need for the caller
+        to know which case it is in.
+      */
+      await get().reconcileCommitted(affected)
     },
 
     async emptyContainer(containerId) {
+      const affected = get()
+        .allocations.filter((a) => a.containerId === containerId)
+        .map((a) => a.masterItemId)
       await allocationRepo.deleteByContainerId(containerId)
       set((s) => ({
         allocations: s.allocations.filter((a) => a.containerId !== containerId),
       }))
+      await get().reconcileCommitted(affected)
     },
 
     async updateContainerCapacity(id, capacityCbm) {
@@ -432,24 +471,19 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       if (containerAllocations.length === 0) return
 
       const committed = await containerRepo.commit(id, ofqReference)
-
-      // Update master committedQuantity (in-memory + repo).
-      const deltas: Record<string, number> = {}
-      for (const a of containerAllocations) {
-        deltas[a.masterItemId] = (deltas[a.masterItemId] ?? 0) + a.quantity
-      }
-      for (const [itemId, delta] of Object.entries(deltas)) {
-        await masterItemRepo.commitQuantity(itemId, delta)
-      }
-
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? committed : c)),
-        masterItems: s.masterItems.map((m) =>
-          deltas[m.id]
-            ? { ...m, committedQuantity: m.committedQuantity + deltas[m.id] }
-            : m,
-        ),
       }))
+
+      /*
+        Committed quantity is RECOMPUTED, not incremented.
+
+        This applied a delta per item. A delta has to land exactly once, in order, and never
+        interleave with another — and when one did not, nothing said so and the line stayed
+        wrong permanently. Deriving the figure from the allocations that are actually committed
+        makes a lost or repeated write harmless, and makes this the repair as well as the update.
+      */
+      await get().reconcileCommitted(containerAllocations.map((a) => a.masterItemId))
     },
 
     async uncommitContainer(id) {
@@ -463,23 +497,13 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       )
 
       const reverted = await containerRepo.uncommit(id)
-
-      const deltas: Record<string, number> = {}
-      for (const a of containerAllocations) {
-        deltas[a.masterItemId] = (deltas[a.masterItemId] ?? 0) + a.quantity
-      }
-      for (const [itemId, delta] of Object.entries(deltas)) {
-        await masterItemRepo.commitQuantity(itemId, -delta)
-      }
-
       set((s) => ({
         containers: s.containers.map((c) => (c.id === id ? reverted : c)),
-        masterItems: s.masterItems.map((m) =>
-          deltas[m.id]
-            ? { ...m, committedQuantity: m.committedQuantity - deltas[m.id] }
-            : m,
-        ),
       }))
+
+      // The same recompute as commit, in the direction where the delta version actually failed:
+      // one line came back holding 149 of a 150 that had been fully reversed.
+      await get().reconcileCommitted(containerAllocations.map((a) => a.masterItemId))
     },
 
     openAllocationDialog(mode) {
@@ -745,6 +769,48 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       return Object.values(get().locks).filter(
         (l) => l.sessionId === SESSION_ID,
       )
+    },
+
+    async reconcileCommitted(masterItemIds) {
+      /*
+        Read the world back before deciding anything. Local state is only what the last mutation
+        believed happened; this has to judge against what the database actually holds, or it
+        would faithfully re-apply the very drift it exists to remove.
+      */
+      const [containers, allocations, masterItems] = await Promise.all([
+        containerRepo.fetchAll(),
+        allocationRepo.fetchAll(),
+        masterItemRepo.fetchAll(),
+      ])
+
+      const committedContainerIds = new Set(
+        containers.filter((c) => c.status === 'committed').map((c) => c.id),
+      )
+
+      const truth = new Map<string, number>()
+      for (const a of allocations) {
+        if (!committedContainerIds.has(a.containerId)) continue
+        truth.set(a.masterItemId, (truth.get(a.masterItemId) ?? 0) + a.quantity)
+      }
+
+      const scope = masterItemIds?.length ? new Set(masterItemIds) : null
+      const wrong = masterItems.filter(
+        (m) =>
+          (!scope || scope.has(m.id)) &&
+          m.committedQuantity !== (truth.get(m.id) ?? 0),
+      )
+
+      for (const m of wrong) {
+        await masterItemRepo.setCommittedQuantity(m.id, truth.get(m.id) ?? 0)
+      }
+
+      // Refetch once at the end rather than patching in place: after a correction, the only
+      // trustworthy version of a line is the one the database just accepted.
+      set({
+        containers,
+        allocations,
+        masterItems: wrong.length ? await masterItemRepo.fetchAll() : masterItems,
+      })
     },
 
     availableQty(masterItemId) {
