@@ -1,11 +1,17 @@
 import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
-import type { Container } from '../../types/container'
+import type { Container, LogisticsStatus } from '../../types/container'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import ContainerCard from './ContainerCard'
 import AddContainerDialog from './AddContainerDialog'
 import { CONTAINER_COL, LINE_GRID, LINE_COLUMNS } from './allocationColumns'
+import { STAGES, STAGE_LABELS, daysInStage, isStalled, stageOf } from './logisticsStages'
+import TrayControls, {
+  type StageStat,
+  type TrayCounts,
+  type TrayView,
+} from './TrayControls'
 
 interface SupplierGroup {
   supplierId: string
@@ -20,6 +26,24 @@ export default function ContainerTray() {
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const { user } = useAuth()
   const isInternal = user.role === 'internal' || user.role === 'admin'
+
+  /*
+    Which slice of the pipeline is on screen. Local state, not the store and not persisted — the
+    same call as `showClosed` in the grid: a way of looking at the board rather than a fact about
+    it. Opens on `all`, so a container is never missing because of a filter someone forgot.
+  */
+  const [view, setView] = useState<TrayView>('all')
+  const [stage, setStage] = useState<LogisticsStatus | null>(null)
+
+  // The supplier focus from the header, applied once and reused by the counts, the summary and
+  // the cards — so the totals cannot describe a different set from what is rendered.
+  const scoped = useMemo(
+    () =>
+      supplierFilterId
+        ? containers.filter((c) => c.supplierId === supplierFilterId)
+        : containers,
+    [containers, supplierFilterId],
+  )
 
   // Containers and drafts follow the same focus filter as the grid, for every role. The old
   // code pinned factory users to their own supplierId, which hid a sibling plant's drafts from
@@ -41,9 +65,6 @@ export default function ContainerTray() {
     order they were created in instead of shuffling on every render.
   */
   const { committed, drafts } = useMemo(() => {
-    const scoped = supplierFilterId
-      ? containers.filter((c) => c.supplierId === supplierFilterId)
-      : containers
     const sorted = [...scoped].sort((a, b) =>
       (isInternal ? supplierName(a.supplierId).localeCompare(supplierName(b.supplierId)) : 0)
       || a.destination.localeCompare(b.destination)
@@ -54,7 +75,57 @@ export default function ContainerTray() {
       drafts: sorted.filter((c) => c.status === 'draft'),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containers, supplierFilterId, suppliers, isInternal])
+  }, [scoped, suppliers, isInternal])
+
+  /*
+    PER-STAGE STATS — counts, and how long the worst one has waited.
+
+    The age is what makes this worth showing. Booking and scheduling are done by other people, so
+    the question is not "how many are booked" but "which of these has nobody touched" — that is
+    the one to chase a forwarder about, or take off them.
+  */
+  const counts: TrayCounts = useMemo(() => {
+    const byStage = Object.fromEntries(
+      STAGES.map((s) => {
+        const inStage = committed.filter((c) => stageOf(c.logisticsStatus) === s)
+        const ages = inStage.map((c) => daysInStage(c)).filter((d): d is number => d !== null)
+        return [
+          s,
+          {
+            count: inStage.length,
+            oldestDays: ages.length ? Math.max(...ages) : null,
+            stalled: inStage.filter(isStalled).length,
+          },
+        ]
+      }),
+    ) as Record<LogisticsStatus, StageStat>
+
+    return {
+      all: committed.length + drafts.length,
+      drafts: drafts.length,
+      committed: committed.length,
+      byStage,
+    }
+  }, [committed, drafts])
+
+  /*
+    WHAT IS ON SCREEN, after both filters. The supplier focus has already been applied above, so
+    this composes with it rather than re-deriving it — one definition of "scoped", one of "in
+    view", and no second copy free to disagree with the cards.
+  */
+  const visibleCommitted = useMemo(() => {
+    if (view === 'drafts') return []
+    if (view !== 'committed' || stage === null) return committed
+    // Longest-waiting first: the point of opening a stage is to act on whatever has been sitting
+    // there, and the thing to act on should not be somewhere in the middle of the list.
+    return committed
+      .filter((c) => stageOf(c.logisticsStatus) === stage)
+      .sort((a, b) => (daysInStage(b) ?? -1) - (daysInStage(a) ?? -1))
+  }, [committed, view, stage])
+
+  const visibleDrafts = view === 'committed' ? [] : drafts
+
+  const visibleCount = visibleCommitted.length + visibleDrafts.length
 
   // Cluster by supplier inside each section, with small labels between groups. This used to be
   // "admin/internal only", on the assumption that a factory sees exactly one supplier. Junsun
@@ -127,18 +198,28 @@ export default function ContainerTray() {
         className="flex-1 overflow-auto px-3 py-3 space-y-3"
         style={{ scrollbarGutter: 'stable' }}
       >
-        {committed.length === 0 && drafts.length === 0 ? (
-          <EmptyState />
+        {visibleCommitted.length === 0 && visibleDrafts.length === 0 ? (
+          <EmptyState
+            view={view}
+            stage={stage}
+            anyExist={counts.all > 0}
+            onClear={() => {
+              setView('all')
+              setStage(null)
+            }}
+          />
         ) : (
           <>
-            {committed.length > 0 ? (
-              <Section label="Committed (OFQs)">
-                <div className="space-y-3">{renderGroups(committed)}</div>
+            {/* Headings only when both kinds are on screen. Under a single view the control in
+                the footer already says what you are looking at, and repeating it is furniture. */}
+            {visibleCommitted.length > 0 ? (
+              <Section label={view === 'all' ? 'Committed (OFQs)' : null}>
+                <div className="space-y-3">{renderGroups(visibleCommitted)}</div>
               </Section>
             ) : null}
-            {drafts.length > 0 ? (
-              <Section label="Drafts">
-                <div className="space-y-3">{renderGroups(drafts)}</div>
+            {visibleDrafts.length > 0 ? (
+              <Section label={view === 'all' ? 'Drafts' : null}>
+                <div className="space-y-3">{renderGroups(visibleDrafts)}</div>
               </Section>
             ) : null}
           </>
@@ -146,9 +227,20 @@ export default function ContainerTray() {
       </div>
 
       <div className="border-t border-navy-200 px-3 py-2.5 bg-white space-y-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400 text-center">
-          {committed.length} committed · {drafts.length} drafts
-        </div>
+        <TrayControls
+          view={view}
+          onViewChange={(v) => {
+            setView(v)
+            // The stage filter belongs to Committed. Carrying it into another view would leave a
+            // narrowing in force that is no longer visible anywhere.
+            if (v !== 'committed') setStage(null)
+          }}
+          stage={stage}
+          onStageChange={setStage}
+          counts={counts}
+          visibleCount={visibleCount}
+          scopeLabel={supplierFilterId ? supplierName(supplierFilterId) : null}
+        />
         <button
           type="button"
           onClick={() => setDialogOpen(true)}
@@ -161,19 +253,36 @@ export default function ContainerTray() {
 
       <AddContainerDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        defaultName={`Container ${drafts.length + committed.length + 1}`}
+        onOpenChange={(next) => {
+          setDialogOpen(next)
+          // Creating while filtered to Committed would put a new draft somewhere you cannot see,
+          // which reads as the button having failed. Closing the dialog returns to a view that
+          // shows drafts.
+          if (!next && view === 'committed') {
+            setView('all')
+            setStage(null)
+          }
+        }}
+        defaultName={`Container ${counts.all + 1}`}
       />
     </div>
   )
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({
+  label,
+  children,
+}: {
+  label: string | null
+  children: React.ReactNode
+}) {
   return (
     <section className="space-y-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400 px-1">
-        {label}
-      </div>
+      {label ? (
+        <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400 px-1">
+          {label}
+        </div>
+      ) : null}
       {children}
     </section>
   )
@@ -191,18 +300,59 @@ function SupplierLabel({ name }: { name: string }) {
   )
 }
 
-function EmptyState() {
+/**
+ * Empty, and WHY it is empty.
+ *
+ * "No containers yet" is simply wrong when six exist and none are shipped — it says the board is
+ * bare when the truth is that a filter is on. Each view says its own thing, and anything other
+ * than a genuinely empty board offers the way back.
+ */
+function EmptyState({
+  view,
+  stage,
+  anyExist,
+  onClear,
+}: {
+  view: TrayView
+  stage: LogisticsStatus | null
+  anyExist: boolean
+  onClear: () => void
+}) {
+  const filtered = anyExist
+  const title = !filtered
+    ? 'No containers yet'
+    : stage
+      ? `Nothing ${STAGE_LABELS[stage].toLowerCase()}`
+      : view === 'drafts'
+        ? 'No drafts'
+        : view === 'committed'
+          ? 'Nothing committed'
+          : 'No containers yet'
+
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-3 text-navy-400 pt-12">
-      <div className="w-16 h-16 rounded-xl border-2 border-dashed border-navy-300 flex items-center justify-center">
-        <span className="text-2xl font-mono font-bold text-navy-100">+</span>
+    <div className="flex h-full flex-col items-center justify-center gap-3 pt-12 text-navy-400">
+      <div className="flex h-16 w-16 items-center justify-center rounded-xl border-2 border-dashed border-navy-300">
+        <span className="font-mono text-2xl font-bold text-navy-100">+</span>
       </div>
-      <div className="text-center max-w-xs">
-        <div className="text-sm font-semibold tracking-wide uppercase text-navy-500">
-          No containers yet
-        </div>
-        <div className="text-xs mt-1 text-navy-400">
-          Click <span className="font-mono">Add container</span> to start building an OFQ.
+      <div className="max-w-xs text-center">
+        <div className="text-sm font-semibold uppercase tracking-wide text-navy-500">{title}</div>
+        <div className="mt-1 text-xs text-navy-400">
+          {filtered ? (
+            <>
+              Nothing here under this filter.{' '}
+              <button
+                type="button"
+                onClick={onClear}
+                className="font-semibold text-amber-accent underline-offset-2 hover:underline"
+              >
+                Show all
+              </button>
+            </>
+          ) : (
+            <>
+              Click <span className="font-mono">Add container</span> to start building an OFQ.
+            </>
+          )}
         </div>
       </div>
     </div>

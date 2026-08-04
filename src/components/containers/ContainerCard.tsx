@@ -5,6 +5,7 @@ import type { Container, LogisticsStatus } from '../../types/container'
 import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
+import { PROGRESS_STAGES, STAGE_LABELS, STAGES, stageOf } from './logisticsStages'
 import { formatDate } from '../../utils/dateHelpers'
 import { exceedsCeiling, getCapacityConfig } from '../../data/containerCapacity'
 import AllocationCard from './AllocationCard'
@@ -53,7 +54,7 @@ export default function ContainerCard({ container }: Props) {
   const isCommitted = container.status === 'committed'
   const canCommit = user.role === 'admin' || user.role === 'internal'
   const canUncommit = user.role === 'admin'
-  const logisticsStage: LogisticsStatus = container.logisticsStatus ?? 'committed'
+  const logisticsStage: LogisticsStatus = stageOf(container.logisticsStatus)
   // Once a committed container moves past 'committed' (booked / scheduled /
   // shipped) it represents a real operational state that can't be undone by
   // clicking a button. Roll back via the Logistics dialog first.
@@ -372,10 +373,9 @@ function LogisticsPillRow({
   stage: LogisticsStatus
   onOpen: () => void
 }) {
-  const order: LogisticsStatus[] = ['committed', 'booked', 'scheduled', 'shipped']
-  const stageIdx = order.indexOf(stage)
+  const stageIdx = STAGES.indexOf(stage)
   const pillState = (target: LogisticsStatus): 'done' | 'next' | 'pending' => {
-    const targetIdx = order.indexOf(target)
+    const targetIdx = STAGES.indexOf(target)
     if (targetIdx <= stageIdx) return 'done'
     if (targetIdx === stageIdx + 1) return 'next'
     return 'pending'
@@ -387,9 +387,9 @@ function LogisticsPillRow({
       className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-navy-50 transition-colors group"
       aria-label="Open logistics details"
     >
-      <Pill label="Booked" state={pillState('booked')} />
-      <Pill label="Scheduled" state={pillState('scheduled')} />
-      <Pill label="Shipped" state={pillState('shipped')} />
+      {PROGRESS_STAGES.map((st) => (
+        <Pill key={st} label={STAGE_LABELS[st]} state={pillState(st)} />
+      ))}
     </button>
   )
 }
