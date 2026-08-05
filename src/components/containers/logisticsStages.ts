@@ -53,22 +53,6 @@ export const stageOf = (logisticsStatus: LogisticsStatus | null): LogisticsStatu
 
 const HOUR_MS = 3_600_000
 
-/**
- * WHAT EACH STAGE IS WAITING FOR.
- *
- * The stage name says where a container is; this says what has not happened yet. That is the
- * more useful half on a card, because the status badge already covers the first — and "awaiting
- * schedule" is the sentence you would actually say when ringing the forwarder.
- *
- * `shipped` is null: it is the end of the chain and owes nothing.
- */
-export const AWAITING_LABELS: Record<LogisticsStatus, string | null> = {
-  committed: 'awaiting booking',
-  booked: 'awaiting schedule',
-  scheduled: 'awaiting departure',
-  shipped: null,
-}
-
 /** When the container entered the stage it is currently in. */
 export function stageEnteredAt(c: {
   logisticsStatus: LogisticsStatus | null
@@ -116,23 +100,28 @@ export function formatStageAge(ms: number): string {
 }
 
 /**
- * What this container is waiting for, and how long it has been waiting.
+ * How long this container has been sitting in the phase it is currently in.
  *
- * Null only when there is genuinely nothing to say: the stage owes nothing (shipped, or a
- * draft), or the stamp that would date it is missing.
+ * NAMES THE PHASE IT IS IN, not the one it is waiting for. This first read "8h awaiting
+ * booking" — describing the next step rather than the current state, which meant the card and
+ * the tray chips were labelling the same container two different ways, and the age appeared to
+ * belong to something that had not happened yet. "8h committed" is the plain reading: this is
+ * where it is, and this is how long it has been there.
  *
- * The age is a formatted string rather than a number because there is no threshold to compare
- * against — nothing downstream needs to decide whether it is "too long", only to show it and to
- * sort by it, and sorting uses `msInStage` directly.
+ * Null when there is no phase to time. A draft has no stamps, and SHIPPED has left the funnel —
+ * there is no next step to reach, so an age there measures nothing anyone is going to act on.
+ *
+ * The age is a formatted string because nothing downstream compares it against anything. There
+ * is no threshold; sorting uses `msInStage` directly.
  */
 export function waitOf(
   c: Parameters<typeof stageEnteredAt>[0],
 ): { age: string; label: string } | null {
-  const label = AWAITING_LABELS[stageOf(c.logisticsStatus)]
-  if (!label) return null
+  const stage = stageOf(c.logisticsStatus)
+  if (stage === 'shipped') return null
 
   const ms = msInStage(c)
   if (ms === null) return null
 
-  return { age: formatStageAge(ms), label }
+  return { age: formatStageAge(ms), label: STAGE_LABELS[stage] }
 }

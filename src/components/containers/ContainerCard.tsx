@@ -238,7 +238,7 @@ export default function ContainerCard({ container }: Props) {
           */}
           {wait ? (
             <div
-              title={`${STAGE_LABELS[logisticsStage]} ${wait.age} ago · ${wait.label}`}
+              title={`${wait.age} in the ${wait.label.toLowerCase()} phase`}
               className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-navy-500"
             >
               <Clock className="h-3 w-3 shrink-0 text-navy-400" />
