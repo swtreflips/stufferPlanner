@@ -60,12 +60,18 @@ export default function TrayControls({
 }) {
   return (
     <div className="space-y-2">
+      {/*
+        Committed first, then Drafts, then All — read in the order the work is, not the order the
+        sets nest in. Committed containers are decisions already made with a clock running on
+        them; drafts are the working state; All is the fallback for seeing everything at once.
+        Leading with the widest option put the least urgent thing first.
+      */}
       <div className="flex items-stretch overflow-hidden rounded-lg border border-navy-200">
         <Segment
-          label="All"
-          count={counts.all}
-          active={view === 'all'}
-          onClick={() => onViewChange('all')}
+          label="Committed"
+          count={counts.committed}
+          active={view === 'committed'}
+          onClick={() => onViewChange('committed')}
         />
         <Segment
           label="Drafts"
@@ -74,10 +80,10 @@ export default function TrayControls({
           onClick={() => onViewChange('drafts')}
         />
         <Segment
-          label="Committed"
-          count={counts.committed}
-          active={view === 'committed'}
-          onClick={() => onViewChange('committed')}
+          label="All"
+          count={counts.all}
+          active={view === 'all'}
+          onClick={() => onViewChange('all')}
           last
         />
       </div>
