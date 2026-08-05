@@ -99,7 +99,14 @@ interface PlannerStore {
   // that actually came back. Length > 1 is what makes a user a group user.
   myOrgIds: string[]
 
-  createContainer(args: CreateContainerArgs): Promise<void>
+  /**
+   * Returns the container it made, so a caller can allocate into it straight away.
+   *
+   * The allocation dialog creates one and immediately places cases in it; without the result it
+   * would have to go hunting through the list for something matching by name, which two
+   * containers called "Container 7" would defeat.
+   */
+  createContainer(args: CreateContainerArgs): Promise<Container>
   deleteContainer(id: string): Promise<void>
   emptyContainer(id: string): Promise<void>
   updateContainerCapacity(id: string, capacityCbm: number): Promise<void>
@@ -297,6 +304,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
         capacityCbm: getCapacityConfig(type)?.defaultOperationalCbm ?? null,
       })
       set((s) => ({ containers: [...s.containers, container] }))
+      return container
     },
 
     async deleteContainer(id) {

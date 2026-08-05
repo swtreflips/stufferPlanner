@@ -6,6 +6,7 @@ import { usePlannerStore } from '../../store/plannerStore'
 import ContainerCard from './ContainerCard'
 import AddContainerDialog from './AddContainerDialog'
 import { CONTAINER_COL, LINE_GRID, LINE_COLUMNS } from './allocationColumns'
+import { nextContainerName } from './containerNaming'
 import {
   STAGES,
   STAGE_LABELS,
@@ -269,7 +270,7 @@ export default function ContainerTray() {
             setStage(null)
           }
         }}
-        defaultName={`Container ${counts.all + 1}`}
+        defaultName={nextContainerName(containers)}
       />
     </div>
   )

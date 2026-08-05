@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Package, X } from 'lucide-react'
+import type { ContainerType } from '../../types/container'
 import { masterLockId } from '../../types/lock'
 import { usePlannerStore } from '../../store/plannerStore'
 import {
@@ -9,6 +10,7 @@ import {
   maxCasesWithinCeiling,
 } from '../../data/containerCapacity'
 import SplitQuantityField from './SplitQuantityField'
+import { nextContainerName, previewContainerCode } from './containerNaming'
 
 /*
   ONE DIALOG: source → destination → quantity.
@@ -33,6 +35,16 @@ import SplitQuantityField from './SplitQuantityField'
 */
 
 const MASTER = '__master__'
+/*
+  A destination that does not exist yet.
+
+  Kept as a picker option rather than a separate button so there is ONE control for "where do
+  these cases go" — and so the case with no eligible containers is the same screen with one
+  fewer option, rather than a dead end offering a red message and nothing to click.
+*/
+const NEW = '__new__'
+
+const CONTAINER_TYPES: ContainerType[] = ['20GP', '40GP', '40HC']
 
 /** One metric row in the before → after container projection. */
 function StateRow({
@@ -69,6 +81,8 @@ export default function AllocationDialog() {
   const availableQty = usePlannerStore((s) => s.availableQty)
   const containerCbm = usePlannerStore((s) => s.containerCbm)
   const addAllocation = usePlannerStore((s) => s.addAllocation)
+  const createContainer = usePlannerStore((s) => s.createContainer)
+  const suppliers = usePlannerStore((s) => s.suppliers)
   const splitAllocation = usePlannerStore((s) => s.splitAllocation)
   const removeAllocation = usePlannerStore((s) => s.removeAllocation)
   const releaseLock = usePlannerStore((s) => s.releaseLock)
@@ -118,13 +132,43 @@ export default function AllocationDialog() {
   useEffect(() => {
     if (!open || !mode) return
     if (mode.kind === 'edit') setDestinationId(mode.toContainerId ?? MASTER)
-    else setDestinationId(mode.containerId ?? eligible[0]?.id ?? '')
+    // No eligible container is no longer a dead end — it opens straight onto the creator, which
+    // is the only remaining answer to "where do these go".
+    else setDestinationId(mode.containerId ?? eligible[0]?.id ?? NEW)
   }, [open, mode, eligible])
 
   const toMaster = isEdit && destinationId === MASTER
+  const toNew = destinationId === NEW
   const destination = useMemo(
-    () => (destinationId === MASTER ? null : containers.find((c) => c.id === destinationId) ?? null),
+    () =>
+      destinationId === MASTER || destinationId === NEW
+        ? null
+        : containers.find((c) => c.id === destinationId) ?? null,
     [destinationId, containers],
+  )
+
+  /*
+    THE CONTAINER THAT DOES NOT EXIST YET.
+
+    Only two fields, because a PO line already decides the other two: a container is eligible
+    only if its destination and supplier match the line, so those are consequences rather than
+    choices. Forcing them is also what guarantees the container this makes is one the picker
+    would have offered — you cannot build something here that then fails to appear.
+  */
+  const [newName, setNewName] = useState('')
+  const [newType, setNewType] = useState<ContainerType>('40HC')
+
+  useEffect(() => {
+    if (!open) return
+    setNewName(nextContainerName(containers))
+    setNewType('40HC')
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset when the dialog opens
+  }, [open])
+
+  const newCodePreview = useMemo(
+    () =>
+      previewContainerCode(containers, suppliers.find((s) => s.id === item?.supplierId)?.code),
+    [containers, suppliers, item],
   )
 
   /* ── how many may move ─────────────────────────────────────────────────── */
@@ -133,9 +177,12 @@ export default function AllocationDialog() {
   const available = item ? availableQty(item.id) : 0
 
   // Cases the DESTINATION can still take before its structural ceiling.
+  // A new container starts empty, so everything the TYPE can hold is available to it.
   const destCap = destination
     ? maxCasesWithinCeiling(destination.type, containerCbm(destination.id), cbmPerCase)
-    : Infinity
+    : toNew
+      ? maxCasesWithinCeiling(newType, 0, cbmPerCase)
+      : Infinity
 
   /*
     `keep` stays in the source; the remainder moves. The bounds differ by direction:
@@ -176,14 +223,18 @@ export default function AllocationDialog() {
   // Whichever box the user is deciding about: the one receiving, or — when cases are going back
   // to the pool — the one they are leaving.
   const projected = destination ?? source
-  const projectedIsDestination = destination !== null
+  const projectedIsDestination = destination !== null || toNew
 
-  const projectedAllocations = projected
-    ? allocations.filter((a) => a.containerId === projected.id)
-    : []
+  // A container that does not exist yet projects from zero, against its type's operational cap.
+  // Answering "will this even fit in a fresh 40HC" before anything is created is most of the
+  // reason the creator is here rather than in the tray.
+  const newCap = getCapacityConfig(newType)?.defaultOperationalCbm ?? null
+
+  const projectedAllocations =
+    projected && !toNew ? allocations.filter((a) => a.containerId === projected.id) : []
   const currentLines = projectedAllocations.length
   const currentCases = projectedAllocations.reduce((s, a) => s + a.quantity, 0)
-  const currentCbm = projected ? containerCbm(projected.id) : 0
+  const currentCbm = projected && !toNew ? containerCbm(projected.id) : 0
 
   // Cases this movement adds to the projected container (negative when it is the one losing).
   const deltaCases = projectedIsDestination ? moved : safeKeep - total
@@ -204,14 +255,14 @@ export default function AllocationDialog() {
   const afterCases = currentCases + deltaCases
   const afterCbm = currentCbm + cbmPerCase * deltaCases
 
-  const opCap = projected?.capacityCbm ?? null
+  const opCap = toNew ? newCap : projected?.capacityCbm ?? null
   const beforeRatio = opCap && opCap > 0 ? currentCbm / opCap : 0
   const afterRatio = opCap && opCap > 0 ? afterCbm / opCap : 0
   const afterFillTone =
     afterRatio > 1 ? 'bg-coral-accent' : afterRatio >= 0.85 ? 'bg-amber-accent' : 'bg-teal-accent'
   const afterTextTone =
     afterRatio > 1 ? 'text-coral-accent' : afterRatio >= 0.85 ? 'text-amber-accent' : 'text-teal-accent'
-  const ceilingConfig = projected ? getCapacityConfig(projected.type) : null
+  const ceilingConfig = getCapacityConfig(toNew ? newType : projected?.type ?? newType)
 
   /* ── guards ────────────────────────────────────────────────────────────── */
 
@@ -223,7 +274,6 @@ export default function AllocationDialog() {
     }
   }
 
-  const noDestinations = !isEdit && eligible.length === 0
   const changed = isEdit ? safeKeep !== total : moved > 0
   const canSubmit =
     !!item &&
@@ -232,7 +282,7 @@ export default function AllocationDialog() {
     safeKeep >= 0 &&
     safeKeep <= keepMax &&
     safeKeep >= keepMin &&
-    (toMaster || !!destination)
+    (toMaster || !!destination || (toNew && newName.trim().length > 0))
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -240,14 +290,28 @@ export default function AllocationDialog() {
     setSubmitting(true)
     setError(null)
     try {
-      if (existing) {
-        await splitAllocation(existing.id, safeKeep, destination?.id ?? null)
-      } else if (destination) {
-        await addAllocation({
-          containerId: destination.id,
-          masterItemId: item.id,
-          quantity: moved,
+      /*
+        Nothing is created until this point. The container and its first allocation land
+        together, so cancelling the dialog after filling the form leaves nothing behind — no
+        empty draft for somebody to notice and clear up later. You came here to place cases;
+        the container is the means.
+      */
+      let targetId = destination?.id ?? null
+      if (toNew) {
+        const created = await createContainer({
+          name: newName.trim(),
+          type: newType,
+          // Not choices — the line decides both, which is what makes this container eligible.
+          destination: item.shipTo,
+          supplierId: item.supplierId,
         })
+        targetId = created.id
+      }
+
+      if (existing) {
+        await splitAllocation(existing.id, safeKeep, targetId)
+      } else if (targetId) {
+        await addAllocation({ containerId: targetId, masterItemId: item.id, quantity: moved })
       }
       onOpenChange(false)
     } catch (err) {
@@ -288,7 +352,7 @@ export default function AllocationDialog() {
   }
 
   const sourceName = source ? source.code : 'master list'
-  const destName = destination ? destination.code : 'master list'
+  const destName = destination ? destination.code : toNew ? (newCodePreview ?? 'new container') : 'master list'
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -330,37 +394,84 @@ export default function AllocationDialog() {
               <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-widest text-navy-400">
                 Move to
               </span>
-              {noDestinations ? (
-                <div className="rounded-lg border border-coral-accent/30 bg-coral-accent/5 px-3 py-2 text-xs text-coral-accent">
-                  No draft containers for {item.shipTo} on {item.name}. Create one first.
-                </div>
-              ) : (
-                <select
-                  value={destinationId}
-                  onChange={(e) => setDestinationId(e.target.value)}
-                  className="w-full rounded-lg border border-navy-200 bg-navy-50 px-3 py-2 text-sm text-navy-900 focus:border-amber-accent focus:outline-none"
-                >
-                  {/* Only offered when cases are coming OUT of a container — from a master row
-                      "back to the master list" would be a no-op dressed as a choice. */}
-                  {isEdit && <option value={MASTER}>Master list</option>}
-                  {eligible.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.code} · {c.name} · {c.type}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <select
+                value={destinationId}
+                onChange={(e) => setDestinationId(e.target.value)}
+                className="w-full rounded-lg border border-navy-200 bg-navy-50 px-3 py-2 text-sm text-navy-900 focus:border-amber-accent focus:outline-none"
+              >
+                {/* Only offered when cases are coming OUT of a container — from a master row
+                    "back to the master list" would be a no-op dressed as a choice. */}
+                {isEdit && <option value={MASTER}>Master list</option>}
+                {eligible.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.code} · {c.name} · {c.type}
+                  </option>
+                ))}
+                {/* Always last, and always present. This replaced a red "create one first"
+                    message that named the problem and offered nothing — and it also covers the
+                    case that message never mentioned, where the only eligible container is
+                    full. */}
+                <option value={NEW}>＋ New container…</option>
+              </select>
             </label>
+
+            {/*
+              TWO FIELDS, because the line already answered the other two. Supplier and
+              destination are shown as STATED FACTS rather than disabled selects — a greyed-out
+              dropdown implies a choice that was taken away, when in truth there never was one.
+            */}
+            {toNew ? (
+              <div className="mt-3 space-y-2 rounded-xl border border-amber-accent/30 bg-amber-accent/[0.03] p-3">
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <label className="block">
+                    <span className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-navy-400">
+                      Name
+                    </span>
+                    <input
+                      type="text"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      className="w-full rounded-lg border border-navy-200 bg-white px-3 py-1.5 text-sm text-navy-900 focus:border-amber-accent focus:outline-none"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-navy-400">
+                      Type
+                    </span>
+                    <select
+                      value={newType}
+                      onChange={(e) => setNewType(e.target.value as ContainerType)}
+                      className="rounded-lg border border-navy-200 bg-white px-3 py-1.5 text-sm text-navy-900 focus:border-amber-accent focus:outline-none"
+                    >
+                      {CONTAINER_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-navy-500">
+                  {item.name} · {item.shipTo}
+                  {newCodePreview ? (
+                    <>
+                      {' · will be '}
+                      <span className="font-bold text-amber-accent">{newCodePreview}</span>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            ) : null}
           </div>
 
-          {projected ? (
+          {projected || toNew ? (
             <div className="px-5 pb-3">
               <div className="overflow-hidden rounded-xl border border-navy-200 bg-navy-50/60">
                 <div className="flex items-center border-b border-navy-100 px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-navy-400">
                   <span className="flex-1 text-navy-500">
-                    {projected.code}
+                    {toNew ? newCodePreview ?? 'New container' : projected?.code}
                     <span className="ml-1 text-navy-400">
-                      {projectedIsDestination ? 'receiving' : 'losing'}
+                      {toNew ? 'new' : projectedIsDestination ? 'receiving' : 'losing'}
                     </span>
                   </span>
                   <span className="w-16 text-right">Now</span>
@@ -416,10 +527,10 @@ export default function AllocationDialog() {
               keepLabel={`Keep in ${sourceName}`}
               moveLabel={`Move to ${destName}`}
               drawLabel={`Take from ${destName}`}
-              disabled={noDestinations || (!toMaster && !destination)}
+              disabled={!toMaster && !destination && !toNew}
             />
 
-            {isEdit && safeKeep === 0 && destination === null ? (
+            {isEdit && safeKeep === 0 && destination === null && !toNew ? (
               <p className="text-[10px] text-coral-accent">
                 Keeping none removes this line from {sourceName} entirely.
               </p>
@@ -468,7 +579,7 @@ export default function AllocationDialog() {
                   disabled={!canSubmit}
                   className="rounded-lg bg-navy-900 px-4 py-2 text-sm font-semibold text-navy-50 transition-colors hover:bg-navy-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Move
+                  {toNew ? 'Create & move' : 'Move'}
                 </button>
               </div>
             </div>

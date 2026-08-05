@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import type { ContainerType } from '../../types/container'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
+import { previewContainerCode } from './containerNaming'
 
 const CONTAINER_TYPES: ContainerType[] = ['20GP', '40GP', '40HC']
 
@@ -87,26 +88,12 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
     )
   }, [open, destinations])
 
-  /*
-    Preview of the code that will be minted, derived from the containers already loaded rather
-    than from a counter — a counter that did not know what already existed is precisely what was
-    re-issuing numbers and tripping the UNIQUE constraint.
-
-    INDICATIVE, not authoritative: the real number is issued by the database on confirm, so if a
-    colleague creates one for the same supplier in the meantime this preview will be one behind.
-    It is a hint about what you are about to get, and the cost of it being occasionally stale is
-    nothing, whereas minting the number here cost a failed save with no message.
-  */
-  const codePreview = useMemo(() => {
-    const supplier = suppliers.find((s) => s.id === supplierId)
-    if (!supplier) return null
-    const prefix = supplier.code.toUpperCase()
-    const used = containers
-      .filter((c) => c.code.startsWith(prefix))
-      .map((c) => Number(c.code.slice(prefix.length)))
-      .filter((n) => Number.isFinite(n))
-    return `${prefix}${String(Math.max(0, ...used) + 1).padStart(4, '0')}`
-  }, [supplierId, suppliers, containers])
+  // Shared with the allocation dialog's inline creator, so the two cannot number containers
+  // differently. See containerNaming.ts for why the preview is indicative.
+  const codePreview = useMemo(
+    () => previewContainerCode(containers, suppliers.find((s) => s.id === supplierId)?.code),
+    [supplierId, suppliers, containers],
+  )
 
   const canSubmit =
     name.trim().length > 0 &&
