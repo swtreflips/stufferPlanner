@@ -12,8 +12,32 @@ export function createLocalMasterItemRepo(): MasterItemRepo {
     async updateCargoReady(id, isoDate) {
       rows = rows.map((r) => (r.id === id ? { ...r, cargoReady: isoDate } : r))
     },
+    /*
+      Mirrors the generated columns: one figure supplied, the other computed against the row's
+      quantity, and the sibling cleared. The arithmetic exists HERE only because there is no
+      Postgres in local mode to do it — the Supabase repo never calculates anything.
+    */
     async updateCbmPerCase(id, value) {
-      rows = rows.map((r) => (r.id === id ? { ...r, cbmPerCase: value } : r))
+      const row = rows.find((r) => r.id === id)
+      const figures = {
+        cbmPerCase: value,
+        cbmTotal: Number((value * (row?.originalQuantity ?? 0)).toFixed(3)),
+        cbmSource: 'per_case' as const,
+      }
+      rows = rows.map((r) => (r.id === id ? { ...r, ...figures } : r))
+      return figures
+    },
+
+    async updateCbmTotal(id, value) {
+      const row = rows.find((r) => r.id === id)
+      const qty = row?.originalQuantity ?? 0
+      const figures = {
+        cbmPerCase: qty > 0 ? Number((value / qty).toFixed(6)) : 0,
+        cbmTotal: value,
+        cbmSource: 'total' as const,
+      }
+      rows = rows.map((r) => (r.id === id ? { ...r, ...figures } : r))
+      return figures
     },
     async setCommittedQuantity(id, quantity) {
       rows = rows.map((r) => (r.id === id ? { ...r, committedQuantity: quantity } : r))

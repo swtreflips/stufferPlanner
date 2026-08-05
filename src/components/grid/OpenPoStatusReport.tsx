@@ -57,8 +57,29 @@ const stufferTheme = themeQuartz.withParams({
 const formatDateCell = (params: { value: unknown }): string =>
   typeof params.value === 'string' && params.value ? formatDate(params.value) : ''
 
-const formatCbmCell = (params: { value: unknown }): string =>
-  typeof params.value === 'number' ? params.value.toFixed(4) : ''
+// Decimals follow the column rather than one figure for both: cbm_per_case is numeric(12,6)
+// and cbm_total numeric(12,3), so four places on a total shows precision the column cannot hold.
+const cbmFormatter = (decimals: number) => (params: { value: unknown }): string =>
+  typeof params.value === 'number' ? params.value.toFixed(decimals) : ''
+
+const formatCbmCell = cbmFormatter(4)
+const formatCbmTotalCell = cbmFormatter(3)
+
+/*
+  A CBM cell reads MUTED when it is the calculated one.
+
+  Exactly one of the two figures is stored and the other is derived from it, so this says which
+  number is a measurement someone took and which is arithmetic. It matters beyond curiosity: the
+  stored one holds when the weekly sync revises quantity, and the derived one moves.
+*/
+const cbmDerivedClass = (
+  data: MasterItem | undefined,
+  field: 'cbmPerCase' | 'cbmTotal',
+): string | null => {
+  if (!data?.cbmSource) return null
+  const stored = data.cbmSource === 'per_case' ? 'cbmPerCase' : 'cbmTotal'
+  return field === stored ? null : 'text-navy-400 italic'
+}
 
 // Cargo Ready + CBM per Case are factory-owned master-data fields. Admin can
 // edit any row; factories edit own-supplier rows only; internal is read-only
@@ -86,7 +107,7 @@ const DOC_COL: ColDef<MasterItem> =
 const SHIP_TO_COL: ColDef<MasterItem> =
   { field: 'shipTo', headerName: 'Ship To', flex: 1.26, minWidth: 126, filter: SetFilter }
 
-const EDITABLE_FIELDS = new Set(['cargoReady', 'cbmPerCase'])
+const EDITABLE_FIELDS = new Set(['cargoReady', 'cbmPerCase', 'cbmTotal'])
 
 export default function OpenPoStatusReport() {
   const masterItems = usePlannerStore((s) => s.masterItems)
@@ -99,6 +120,7 @@ export default function OpenPoStatusReport() {
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
   const updateMasterCargoReady = usePlannerStore((s) => s.updateMasterCargoReady)
   const updateMasterCbmPerCase = usePlannerStore((s) => s.updateMasterCbmPerCase)
+  const updateMasterCbmTotal = usePlannerStore((s) => s.updateMasterCbmTotal)
   const recentlySavedKey = usePlannerStore((s) => s.recentlySavedKey)
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
   const myOrgIds = usePlannerStore((s) => s.myOrgIds)
@@ -164,10 +186,29 @@ export default function OpenPoStatusReport() {
   // teal highlight comes on and off without rebuilding the whole grid.
   useEffect(() => {
     gridApiRef.current?.refreshCells({
-      columns: ['cargoReady', 'cbmPerCase'],
+      columns: ['cargoReady', 'cbmPerCase', 'cbmTotal'],
       force: true,
     })
   }, [recentlySavedKey])
+
+  /*
+    Shared by both CBM columns: the editable tint, the teal saved-flash, and the muting that
+    marks whichever figure is the calculated one. One function so the two columns cannot drift
+    into looking like different kinds of thing.
+  */
+  const cbmCellClass = (
+    params: { data?: MasterItem; colDef: { field?: string } },
+    field: 'cbmPerCase' | 'cbmTotal',
+  ) => {
+    const classes: string[] = []
+    if (canEditRow(params.data, user, myOrgIds)) classes.push('bg-amber-accent/[0.04]')
+    const derived = cbmDerivedClass(params.data, field)
+    if (derived) classes.push(derived)
+    if (params.data && recentlySavedKey === `${params.data.id}:${field}`) {
+      classes.push('!bg-teal-accent/[0.18]')
+    }
+    return classes.join(' ')
+  }
 
   const columnDefs = useMemo<ColDef<MasterItem>[]>(
     () => [
@@ -239,6 +280,11 @@ export default function OpenPoStatusReport() {
           'text-coral-accent font-semibold': (params) => params.value === 0,
         },
       },
+      /*
+        BOTH CBM FIGURES ARE EDITABLE, and typing either one makes it the stored figure while the
+        other becomes derived from it. Total CBM was read-only before — not by design, it simply
+        had no editor, and the write path it needed did not exist.
+      */
       {
         field: 'cbmPerCase',
         headerName: 'CBM/Case',
@@ -250,18 +296,7 @@ export default function OpenPoStatusReport() {
           canEditRow(params.data, user, myOrgIds),
         cellEditor: 'agNumberCellEditor',
         cellEditorParams: { precision: 4, min: 0 },
-        cellClass: (params) => {
-          const classes: string[] = []
-          if (canEditRow(params.data, user, myOrgIds)) classes.push('bg-amber-accent/[0.04]')
-          if (
-            params.data &&
-            params.colDef.field &&
-            recentlySavedKey === `${params.data.id}:${params.colDef.field}`
-          ) {
-            classes.push('!bg-teal-accent/[0.18]')
-          }
-          return classes.join(' ')
-        },
+        cellClass: (params) => cbmCellClass(params, 'cbmPerCase'),
       },
       {
         field: 'cbmTotal',
@@ -269,7 +304,12 @@ export default function OpenPoStatusReport() {
         flex: 0.70,
         minWidth: 70,
         type: 'numericColumn',
-        valueFormatter: formatCbmCell,
+        valueFormatter: formatCbmTotalCell,
+        editable: (params: EditableCallbackParams<MasterItem>) =>
+          canEditRow(params.data, user, myOrgIds),
+        cellEditor: 'agNumberCellEditor',
+        cellEditorParams: { precision: 3, min: 0 },
+        cellClass: (params) => cbmCellClass(params, 'cbmTotal'),
       },
       {
         field: 'cargoReady',
@@ -381,12 +421,15 @@ export default function OpenPoStatusReport() {
       }
       return
     }
-    if (event.colDef.field === 'cbmPerCase') {
+    // Both CBM columns take the same shape of value and differ only in which figure becomes the
+    // stored one — the store and the database handle that, so there is nothing to branch on here
+    // beyond which call to make.
+    if (event.colDef.field === 'cbmPerCase' || event.colDef.field === 'cbmTotal') {
       const next = event.newValue
       const parsed = typeof next === 'number' ? next : Number(next)
-      if (Number.isFinite(parsed) && parsed >= 0) {
-        void updateMasterCbmPerCase(item.id, parsed)
-      }
+      if (!Number.isFinite(parsed) || parsed < 0) return
+      if (event.colDef.field === 'cbmPerCase') void updateMasterCbmPerCase(item.id, parsed)
+      else void updateMasterCbmTotal(item.id, parsed)
       return
     }
   }

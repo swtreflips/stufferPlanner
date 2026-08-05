@@ -1,3 +1,14 @@
+/**
+ * Which CBM figure the supplier actually supplied; the other one is calculated from it.
+ *
+ * Exactly one of `cbm_per_case` / `cbm_total` is stored, so this says which of the two numbers
+ * on screen is a MEASUREMENT and which is arithmetic. It is not cosmetic: when the weekly ERP
+ * sync revises quantity_available, the stored figure holds and the derived one moves.
+ *
+ * null means neither has been given yet — both read 0.
+ */
+export type CbmSource = 'per_case' | 'total' | null
+
 export interface MasterItem {
   id: string
   name: string
@@ -17,6 +28,7 @@ export interface MasterItem {
   eta: string | null
   cbmPerCase: number
   cbmTotal: number
+  cbmSource: CbmSource
   raw: Record<string, unknown>
 
   /**

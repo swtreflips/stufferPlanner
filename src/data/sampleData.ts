@@ -97,6 +97,7 @@ export const sampleMasterItems: MasterItem[] = seedRows.map((r) => {
   return {
     id: `${r.documentNumber}-${r.lineId}`,
     isClosed: false,          // sample rows are all open; the ERP sync is Supabase-only
+    cbmSource: null,          // no CBM supplied in the fixtures
     name: r.name,
     supplierId,
     dateIssued: r.dateIssued ? mdyToISO(r.dateIssued) : '',

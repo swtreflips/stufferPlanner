@@ -127,6 +127,7 @@ interface PlannerStore {
   // Factory-owned master-data edits. Inline grid + CSV upload both route here.
   updateMasterCargoReady(id: string, isoDate: string): Promise<void>
   updateMasterCbmPerCase(id: string, value: number): Promise<void>
+  updateMasterCbmTotal(id: string, value: number): Promise<void>
   markSaved(key: string): void
 
   commitContainer(id: string, ofqReference: string): Promise<void>
@@ -543,14 +544,29 @@ export const usePlannerStore = create<PlannerStore>((set, get) => {
       }))
       get().markSaved(`${id}:cargoReady`)
     },
+    /*
+      Both CBM edits merge the RESOLVED pair the database sent back, which is what makes the
+      other column fill immediately.
+
+      This previously patched only the field that was typed, so the sibling kept whatever value
+      it had been fetched with until someone reloaded — the derived number silently disagreeing
+      with the one it was derived from. Nothing here recomputes it: the figures come from the
+      generated columns, so the client cannot drift from the definition or get the divisor wrong.
+    */
     async updateMasterCbmPerCase(id, value) {
-      await masterItemRepo.updateCbmPerCase(id, value)
+      const figures = await masterItemRepo.updateCbmPerCase(id, value)
       set((s) => ({
-        masterItems: s.masterItems.map((m) =>
-          m.id === id ? { ...m, cbmPerCase: value } : m,
-        ),
+        masterItems: s.masterItems.map((m) => (m.id === id ? { ...m, ...figures } : m)),
       }))
       get().markSaved(`${id}:cbmPerCase`)
+    },
+
+    async updateMasterCbmTotal(id, value) {
+      const figures = await masterItemRepo.updateCbmTotal(id, value)
+      set((s) => ({
+        masterItems: s.masterItems.map((m) => (m.id === id ? { ...m, ...figures } : m)),
+      }))
+      get().markSaved(`${id}:cbmTotal`)
     },
     markSaved(key) {
       set({ recentlySavedKey: key })

@@ -1,4 +1,4 @@
-import type { MasterItem } from '../../types/masterItem'
+import type { CbmSource, MasterItem } from '../../types/masterItem'
 import type {
   Container,
   ContainerBooking,
@@ -17,10 +17,30 @@ import type {
 } from '../../types/sync'
 import type { SnapshotRow } from '../../utils/plannerInputParser'
 
+/** The resolved CBM pair after a write, plus which figure is now the stored one. */
+export interface CbmFigures {
+  cbmPerCase: number
+  cbmTotal: number
+  cbmSource: CbmSource
+}
+
 export interface MasterItemRepo {
   fetchAll(): Promise<MasterItem[]>
   updateCargoReady(id: string, isoDate: string): Promise<void>
-  updateCbmPerCase(id: string, value: number): Promise<void>
+
+  /*
+    SUPPLY ONE, THE OTHER IS DERIVED — and each write clears its sibling.
+
+    cbm_per_case_eff / cbm_total_eff are generated columns and cbm_per_case wins when both raw
+    figures are set, so writing a total without clearing the per-case would change nothing on
+    screen. Clearing makes the edit take effect, and makes "which one did somebody measure" a
+    real property of the row rather than an accident of write order.
+
+    Both return the RESOLVED pair straight from the database, which is what lets the sibling
+    column update without a reload and keeps every CBM calculation out of the client.
+  */
+  updateCbmPerCase(id: string, value: number): Promise<CbmFigures>
+  updateCbmTotal(id: string, value: number): Promise<CbmFigures>
   /**
    * Set committed quantity ABSOLUTELY, never by delta.
    *
