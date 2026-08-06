@@ -120,7 +120,7 @@ export default function CommitConfirmDialog() {
                     <span className="min-w-0">
                       <span className="font-semibold text-navy-900">{item.sku}</span>
                       <span className="ml-2 text-[10px] font-mono uppercase tracking-widest text-navy-400">
-                        {item.documentNumber} · line {item.lineId}
+                        {item.documentNumber}
                       </span>
                     </span>
                     <span className="font-mono font-semibold text-navy-900 shrink-0">

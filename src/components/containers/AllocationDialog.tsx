@@ -379,7 +379,7 @@ export default function AllocationDialog() {
           <div className="px-5 pt-4 pb-2">
             <div className="text-sm font-semibold text-navy-900">{item.sku}</div>
             <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
-              {item.documentNumber} · line {item.lineId} · {item.name}
+              {item.documentNumber} · {item.name}
             </div>
             <div className="mt-1 text-[10px] font-mono uppercase tracking-widest text-navy-500">
               from <span className="font-bold text-navy-900">{sourceName}</span>

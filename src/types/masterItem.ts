@@ -18,7 +18,6 @@ export interface MasterItem {
   shipTo: string
   requestedShipBy: string
   status: string
-  lineId: number
   sku: string
   originalQuantity: number
   committedQuantity: number

@@ -5,7 +5,6 @@ interface DragPreviewData {
   type?: string
   sku?: string
   documentNumber?: string
-  lineId?: number
   quantity?: number
 }
 
@@ -22,7 +21,7 @@ export default function DragOverlayRenderer() {
       <div className="text-xs">
         <div className="font-semibold text-navy-900">{data.sku}</div>
         <div className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
-          {data.documentNumber} · line {data.lineId}
+          {data.documentNumber}
           {data.type === 'allocation' && data.quantity !== undefined
             ? ` · × ${data.quantity}`
             : ''}

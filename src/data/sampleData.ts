@@ -58,6 +58,8 @@ interface SeedRow {
   name: string
   documentNumber: string
   shipTo: string
+  /** Fixture-only discriminator so two rows of the same PO get distinct `id`s. NOT displayed
+      and not a MasterItem field — the invented "line 2" label it used to feed is gone. */
   lineId: number
   sku: string
   quantityRemaining: number
@@ -105,7 +107,6 @@ export const sampleMasterItems: MasterItem[] = seedRows.map((r) => {
     shipTo: r.shipTo,
     requestedShipBy: r.requestedShipBy ? mdyToISO(r.requestedShipBy) : '',
     status: '',
-    lineId: r.lineId,
     sku: r.sku,
     originalQuantity: r.quantityRemaining,
     committedQuantity: 0,

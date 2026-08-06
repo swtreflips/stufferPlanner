@@ -52,22 +52,12 @@ const SELECT =
   'committed_quantity, due_date, destination, cargo_ready, cbm_per_case, cbm_total, ' +
   'cbm_per_case_eff, cbm_total_eff, status, raw, organizations(name)'
 
-// planner_po_lines is keyed on (document_number, sku); there is no line_id column, because
-// the internal export does not carry one. lineId is presentational only, so it is derived
-// per PO from a stable sort — never persisted, never used to match anything.
-function withLineIds(rows: Row[]): Map<string, number> {
-  const seen = new Map<string, number>()
-  const out = new Map<string, number>()
-  for (const r of [...rows].sort((a, b) =>
-    a.document_number.localeCompare(b.document_number) || a.sku.localeCompare(b.sku),
-  )) {
-    const n = (seen.get(r.document_number) ?? 0) + 1
-    seen.set(r.document_number, n)
-    out.set(r.id, n)
-  }
-  return out
-}
-
+// NOTE: planner_po_lines is keyed on (document_number, sku) and has no line_id column, because
+// the internal export does not carry one. A `lineId` used to be INVENTED here — assigned per PO
+// by sorting on SKU — and shown as "·L2" on allocation cards. It was removed because it was
+// worse than meaningless: the number described alphabetical position, not anything in the ERP,
+// and it silently renumbered whenever the weekly sync brought a SKU that sorted earlier. A label
+// that changes what it points at between syncs is a label nobody can act on.
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 /** Which of the two figures was supplied. Mirrors `supplied_as` in planner_cbm_observations. */
@@ -197,7 +187,6 @@ export function createSupabaseMasterItemRepo(): MasterItemRepo {
       if (error) throw new Error(`Failed to load open PO lines: ${error.message}`)
 
       const rows = (data ?? []) as unknown as Row[]
-      const lineIds = withLineIds(rows)
 
       return rows.map((r): MasterItem => {
         const raw = r.raw ?? {}
@@ -210,7 +199,6 @@ export function createSupabaseMasterItemRepo(): MasterItemRepo {
           shipTo: r.destination ?? '',
           requestedShipBy: r.due_date ?? '',
           status: str(raw['Status']),
-          lineId: lineIds.get(r.id) ?? 1,
           sku: r.sku,
           originalQuantity: r.quantity_available ?? r.quantity ?? 0,
           committedQuantity: r.committed_quantity ?? 0,

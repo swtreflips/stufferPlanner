@@ -30,7 +30,6 @@ export default function AllocationCard({ allocation, masterItem, onClick }: Prop
       sourceContainerId: allocation.containerId,
       sku: masterItem.sku,
       documentNumber: masterItem.documentNumber,
-      lineId: masterItem.lineId,
       quantity: allocation.quantity,
     },
   })
@@ -57,9 +56,6 @@ export default function AllocationCard({ allocation, masterItem, onClick }: Prop
     >
       <span className="min-w-0 truncate font-mono text-navy-600">
         {masterItem.documentNumber}
-        {masterItem.lineId > 1 ? (
-          <span className="text-navy-400"> ·L{masterItem.lineId}</span>
-        ) : null}
       </span>
       <span className="flex min-w-0 items-center gap-1.5">
         {lock ? <LockedAvatar lock={lock} /> : null}

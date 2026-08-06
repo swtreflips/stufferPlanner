@@ -24,7 +24,6 @@ export default function DraggableRowHandle({ masterItem }: Props) {
       supplierId: masterItem.supplierId,
       sku: masterItem.sku,
       documentNumber: masterItem.documentNumber,
-      lineId: masterItem.lineId,
     },
   })
 
