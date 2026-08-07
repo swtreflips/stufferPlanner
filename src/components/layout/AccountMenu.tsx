@@ -124,9 +124,14 @@ export default function AccountMenu() {
           </Link>
 
           <div className="my-1 border-t border-navy-100" />
+          {/* scope:'local' — signs out of THIS app only.
+              supabase-js defaults to `{ scope: 'global' }`, which revokes every refresh token the
+              user holds. The planner, RatesApp and Schedules share one Supabase project, so the
+              default meant signing out here silently ended the other two, including on other
+              devices. Separate origins already mean separate sessions; sign-out now matches. */}
           <button
             type="button"
-            onClick={() => void supabase.auth.signOut()}
+            onClick={() => void supabase.auth.signOut({ scope: 'local' })}
             className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-coral-accent transition-colors hover:bg-red-50"
           >
             <LogOut className="w-[15px] h-[15px]" />

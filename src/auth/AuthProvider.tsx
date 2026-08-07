@@ -197,8 +197,10 @@ function NoAccess({ email, error }: { email?: string; error?: string | null }) {
       <p className="max-w-sm text-xs text-slate-500">
         {error ?? 'Ask an administrator to set one up. Authenticated is not the same as authorised.'}
       </p>
+      {/* scope:'local' — this app only; see AccountMenu. The global default would also sign the
+          user out of RatesApp and Schedules, which share this Supabase project. */}
       <button
-        onClick={() => supabase.auth.signOut()}
+        onClick={() => supabase.auth.signOut({ scope: 'local' })}
         className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
       >
         Sign out
