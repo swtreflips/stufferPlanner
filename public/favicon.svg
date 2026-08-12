@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Stuffer Planner">
+  <!--
+    A container, part-loaded.
+
+    Not a clipboard: a clipboard says "todo app" and this app decides what goes in the box. Five
+    slots filled from the bottom, one still open at the top right — the asymmetry is the whole
+    idea, because a container that is not yet full is the state anyone opens this app to change.
+
+    The green slot is the piece just placed, in the app's own accent (--color-amber-accent, which
+    is green despite the token name) on the navy-900 tile.
+
+    Built for 16px first. Six rectangles and a rounded tile — no strokes, no gradients, no detail
+    that survives at thumbnail size only to turn to mush in a browser tab.
+  -->
+  <rect width="32" height="32" rx="7" fill="#112424"/>
+
+  <!-- filled: two full rows, loaded from the floor up -->
+  <rect x="7"  y="20"   width="8" height="5" rx="1.2" fill="#f7f7f5"/>
+  <rect x="17" y="20"   width="8" height="5" rx="1.2" fill="#f7f7f5"/>
+  <rect x="7"  y="13.5" width="8" height="5" rx="1.2" fill="#f7f7f5"/>
+  <rect x="17" y="13.5" width="8" height="5" rx="1.2" fill="#f7f7f5"/>
+
+  <!-- the piece being placed -->
+  <rect x="7"  y="7"    width="8" height="5" rx="1.2" fill="#25864a"/>
+
+  <!-- the space still open — held at low opacity so it reads as a SLOT rather than as nothing.
+       A stroke would vanish at 16px; a faint fill survives. -->
+  <rect x="17" y="7"    width="8" height="5" rx="1.2" fill="#f7f7f5" opacity="0.18"/>
+</svg>
