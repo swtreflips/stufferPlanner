@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Filter } from 'lucide-react'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
+import { supplierLabel } from '../../types/supplier'
 
 /**
  * Supplier focus, in the global header. Scopes the container tray AND the open-PO grid
@@ -92,7 +93,7 @@ export default function SupplierFilter() {
         <option value="">All suppliers</option>
         {suppliers.map((s) => (
           <option key={s.id} value={s.id}>
-            {s.code} · {s.name}
+            {supplierLabel(s)}
           </option>
         ))}
       </select>

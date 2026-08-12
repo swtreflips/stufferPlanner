@@ -5,6 +5,7 @@ import type { ContainerType } from '../../types/container'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { previewContainerCode } from './containerNaming'
+import { supplierLabel } from '../../types/supplier'
 
 const CONTAINER_TYPES: ContainerType[] = ['20GP', '40GP', '40HC']
 
@@ -165,7 +166,7 @@ export default function AddContainerDialog({ open, onOpenChange, defaultName }: 
                 >
                   {myOrgs.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.code} · {s.name}
+                      {supplierLabel(s)}
                     </option>
                   ))}
                 </select>
