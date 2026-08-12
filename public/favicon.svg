@@ -6,8 +6,12 @@
     slots filled from the bottom, one still open at the top right — the asymmetry is the whole
     idea, because a container that is not yet full is the state anyone opens this app to change.
 
-    The green slot is the piece just placed, in the app's own accent (--color-amber-accent, which
-    is green despite the token name) on the navy-900 tile.
+    The green slot is the piece just placed, in the app's own accent token (amber-accent, which is
+    green despite that name) on the navy-900 tile.
+
+    NB: no double hyphen anywhere in these comments. XML forbids it inside a comment body, and
+    writing the CSS variable with its leading dashes made this whole file malformed — browsers
+    silently rendered nothing.
 
     Built for 16px first. Six rectangles and a rounded tile — no strokes, no gradients, no detail
     that survives at thumbnail size only to turn to mush in a browser tab.
