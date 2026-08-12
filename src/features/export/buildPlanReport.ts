@@ -22,8 +22,28 @@ import { allocationsOf, containerTotals, allocatedByItem } from '../../component
   container is needed.
 */
 
+/*
+  EVERYTHING HERE IS UTC, AND SAYS SO.
+
+  The people reading this file are in different regions, and the question it has to settle is
+  "which of these two attachments is newer". Local time cannot answer that — 09:00 in one inbox
+  and 14:30 in another may be the same instant or a day apart, and the reader has no way to tell
+  which. One scale, marked, removes the question rather than moving it.
+
+  So the stamp carries an explicit "UTC" and the filename an explicit "Z". A timestamp that does
+  not name its zone is the thing that caused the doubt in the first place.
+*/
 export interface ReportMeta {
+  /** Human form, zone stated: `2026-08-12 14:30 UTC`. */
   generatedAt: string
+  /**
+   * Filename-safe UTC stamp: `2026-08-12-1430Z`.
+   *
+   * Hyphens, never colons — a colon is illegal in a Windows filename and the file is destined for
+   * someone's Downloads folder. Big-endian so a folder of these sorts chronologically on name
+   * alone, which is how anyone actually finds the latest one.
+   */
+  generatedStamp: string
   generatedBy: string
   /** Supplier code, or 'ALL' when no filter is applied. Also the filename's middle segment. */
   scope: string
@@ -196,7 +216,10 @@ export function buildPlanReport({
 
   return {
     meta: {
-      generatedAt: now.toISOString().slice(0, 16).replace('T', ' '),
+      // toISOString is already UTC; the only thing missing was saying so.
+      // '2026-08-12T14:30:52.000Z' -> '2026-08-12 14:30 UTC' and '2026-08-12-1430Z'
+      generatedAt: `${now.toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+      generatedStamp: `${now.toISOString().slice(0, 10)}-${now.toISOString().slice(11, 16).replace(':', '')}Z`,
       generatedBy,
       scope: supplierFilterId ? supplierCode(supplierFilterId) : 'ALL',
       containers: containerRows.length,
@@ -209,7 +232,13 @@ export function buildPlanReport({
   }
 }
 
-/** `planner-DTR-2026-08-12.xlsx`. The code is in the name so the wrong factory's file is obvious
-    before it is attached, not after. */
+/**
+ * `planner-DTR-2026-08-12-1430Z.xlsx`
+ *
+ * Two things are deliberately in the name. The supplier CODE, so the wrong factory's file is
+ * obvious before it is attached rather than after. And a UTC timestamp to the minute, so two
+ * exports on the same day are distinguishable — a date alone collided, and the browser resolving
+ * that by appending "(1)" tells you which was downloaded second, not which was generated later.
+ */
 export const reportFilename = (meta: ReportMeta): string =>
-  `planner-${meta.scope}-${meta.generatedAt.slice(0, 10)}.xlsx`
+  `planner-${meta.scope}-${meta.generatedStamp}.xlsx`
