@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Plus, Download, Loader2 } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import type { Container, LogisticsStatus } from '../../types/container'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
@@ -7,8 +7,6 @@ import ContainerCard from './ContainerCard'
 import AddContainerDialog from './AddContainerDialog'
 import { CONTAINER_COL, LINE_GRID, LINE_COLUMNS } from './allocationColumns'
 import { nextContainerName } from './containerNaming'
-import { buildPlanReport } from '../../features/export/buildPlanReport'
-import { downloadPlanReport } from '../../features/export/writeWorkbook'
 import {
   STAGES,
   STAGE_LABELS,
@@ -33,10 +31,7 @@ export default function ContainerTray() {
   const containers = usePlannerStore((s) => s.containers)
   const suppliers = usePlannerStore((s) => s.suppliers)
   const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
-  const allAllocations = usePlannerStore((s) => s.allocations)
-  const masterItems = usePlannerStore((s) => s.masterItems)
-  const [exporting, setExporting] = useState(false)
-  const [exportError, setExportError] = useState<string | null>(null)
+
   const { user } = useAuth()
   const isInternal = user.role === 'internal' || user.role === 'admin'
 
@@ -176,33 +171,6 @@ export default function ContainerTray() {
     ))
   }
 
-  /*
-    The plan as a sendable document. Scope follows the on-screen supplier filter, so you export
-    what you are looking at — and the code lands in the filename, where attaching the wrong
-    factory's plan is visible before it is sent rather than after.
-  */
-  const handleExport = async () => {
-    setExporting(true)
-    setExportError(null)
-    try {
-      const report = buildPlanReport({
-        containers,
-        allocations: allAllocations,
-        masterItems,
-        suppliers,
-        supplierFilterId,
-        generatedBy: user?.email ?? 'unknown',
-      })
-      await downloadPlanReport(report)
-    } catch (err) {
-      // xlsx is fetched on demand, so this is usually a failed chunk load rather than bad data.
-      // Saying so beats a button that silently does nothing.
-      setExportError(err instanceof Error ? err.message : 'Export failed')
-    } finally {
-      setExporting(false)
-    }
-  }
-
   return (
     <div className="flex flex-col h-full">
       {/* Global column header — a 40px band that lines up with the master grid header on the
@@ -290,21 +258,6 @@ export default function ContainerTray() {
           Add container
         </button>
 
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={exporting}
-          title="Download this plan as an Excel workbook — containers, contents and what is still open"
-          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-navy-200 hover:border-navy-400 text-navy-600 hover:text-navy-900 text-sm font-semibold transition-colors disabled:opacity-50"
-        >
-          {exporting
-            ? <Loader2 className="w-4 h-4 animate-spin" />
-            : <Download className="w-4 h-4" />}
-          Export plan{supplierFilterId ? ` · ${supplierName(supplierFilterId)}` : ''}
-        </button>
-        {exportError && (
-          <p className="text-[11px] leading-snug text-coral-accent">{exportError}</p>
-        )}
       </div>
 
       <AddContainerDialog

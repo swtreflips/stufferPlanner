@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   DndContext,
@@ -20,12 +20,14 @@ import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import ContainerTray from '../containers/ContainerTray'
 import DragOverlayRenderer from '../drag/DragOverlayRenderer'
-import { Upload } from 'lucide-react'
+import { Upload, Download, Loader2 } from 'lucide-react'
 import AllocationDialog from '../containers/AllocationDialog'
 import CommitConfirmDialog from '../containers/CommitConfirmDialog'
 import ContainerLogisticsDialog from '../containers/ContainerLogisticsDialog'
 import MasterCsvUploadDialog from '../grid/MasterCsvUploadDialog'
 import PresenceManager from '../presence/PresenceManager'
+import { buildPlanReport } from '../../features/export/buildPlanReport'
+import { downloadPlanReport } from '../../features/export/writeWorkbook'
 
 const OpenPoStatusReport = lazy(() => import('../grid/OpenPoStatusReport'))
 
@@ -52,9 +54,30 @@ interface DropTargetData {
   supplierId?: string
 }
 
+/*
+  The header's action shape. One constant so Upload and Export cannot drift apart — they are the
+  two ways data crosses the boundary of this app, and a pair that behaves like a pair should look
+  like one.
+
+  Quiet on purpose: white with a hairline border, going amber only on hover. These sit beside a
+  logo and an account menu, and a header button that shouts competes with the board — which is the
+  thing anyone actually came here to look at.
+*/
+const HEADER_ACTION =
+  'inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-navy-200 bg-white ' +
+  'text-[11px] font-semibold text-navy-700 transition-colors ' +
+  'hover:border-amber-accent hover:text-navy-900 ' +
+  'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-navy-200'
+
 export default function AppLayout() {
   const { user } = useAuth()
   const openPoCount = usePlannerStore((s) => s.masterItems.length)
+  const masterItems = usePlannerStore((s) => s.masterItems)
+  const containers = usePlannerStore((s) => s.containers)
+  const allocations = usePlannerStore((s) => s.allocations)
+  const suppliers = usePlannerStore((s) => s.suppliers)
+  const supplierFilterId = usePlannerStore((s) => s.supplierFilterId)
+  const [exporting, setExporting] = useState(false)
   const openAllocationDialog = usePlannerStore((s) => s.openAllocationDialog)
   const openCsvUploadDialog = usePlannerStore((s) => s.openCsvUploadDialog)
   const acquireLock = usePlannerStore((s) => s.acquireLock)
@@ -72,6 +95,31 @@ export default function AppLayout() {
   // Admin + factory can upload factory CSVs (master-data edits); internal is
   // read-only on master data, no upload affordance.
   const canUploadCsv = user.role === 'admin' || user.role === 'factory'
+
+  /*
+    Export lives here rather than in the container tray, where it first shipped. The tray is the
+    working surface and its vertical space is the scarce thing — a permanent button at its foot
+    cost a row of containers to do a job nobody does mid-allocation. Up here it sits with the other
+    thing you do TO the whole board rather than to one container.
+  */
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      await downloadPlanReport(buildPlanReport({
+        containers,
+        allocations,
+        masterItems,
+        suppliers,
+        supplierFilterId,
+        generatedBy: user?.email ?? 'unknown',
+      }))
+    } catch (err) {
+      // xlsx is fetched on demand, so a failure here is usually the chunk, not the data.
+      console.error('export failed', err)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -232,21 +280,61 @@ export default function AppLayout() {
             className="h-11 w-auto"
           />
           <SupplierFilter />
-          <div className="flex items-center gap-3">
-            {canUploadCsv ? (
+          {/*
+            ONE RULE ACROSS THESE THREE: an action carries chrome, a number does not.
+
+            It used to be the other way round by accident. The PO count was a dark pill with a
+            border — heavier than the Upload button beside it — so the one thing you cannot click
+            was the thing that looked most clickable. Upload was solid navy-900, Export was an
+            outlined button in the tray, and the count out-shouted both.
+
+            Now the two verbs are one shape, and the count is set as a figure with a caption. It
+            reads as a readout because it is one.
+          */}
+          <div className="flex items-center gap-4">
+            {/* The figure carries the weight; the words are the unit. Tabular so it does not
+                jiggle as POs come and go on a sync. */}
+            <span className="hidden items-baseline gap-1.5 sm:flex">
+              <span className="font-mono text-base font-bold tabular-nums text-navy-900">
+                {openPoCount}
+              </span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-navy-400">
+                open POs
+              </span>
+            </span>
+
+            <span className="hidden h-6 w-px bg-navy-200 sm:block" />
+
+            {/* Two verbs, one shape. Data in, data out — they belong to each other and now look
+                like it. Amber on hover is the app's established "this is live" accent. */}
+            <div className="flex items-center gap-2">
+              {canUploadCsv ? (
+                <button
+                  type="button"
+                  onClick={openCsvUploadDialog}
+                  title="Upload a factory CSV to update master data"
+                  className={HEADER_ACTION}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Upload CSV
+                </button>
+              ) : null}
               <button
                 type="button"
-                onClick={openCsvUploadDialog}
-                className="flex items-center gap-1.5 h-7 px-2.5 rounded text-[10px] font-mono uppercase tracking-widest bg-navy-900 text-navy-50 hover:bg-navy-800 transition-colors"
+                onClick={handleExport}
+                disabled={exporting}
+                title="Download this plan as an Excel workbook — containers, contents and what is still open"
+                className={HEADER_ACTION}
               >
-                <Upload className="w-3 h-3" />
-                Upload CSV
+                {exporting
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Download className="w-3.5 h-3.5" />}
+                Export plan
               </button>
-            ) : null}
-            <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-navy-800 text-navy-300 border border-navy-700">
-              {openPoCount} open POs
-            </span>
-            <span className="mx-1 hidden h-6 w-px bg-navy-200 sm:block" />
+            </div>
+
+            <span className="hidden h-6 w-px bg-navy-200 sm:block" />
+
             {/* Replaces a bare role caption. Same identity, but now it is somewhere to sign out
                 from — which the app had no way to do at all. */}
             <AccountMenu />
