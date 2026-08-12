@@ -16,6 +16,7 @@ import { formatDate } from '../../utils/dateHelpers'
 import { exceedsCeiling, getCapacityConfig } from '../../data/containerCapacity'
 import AllocationCard from './AllocationCard'
 import ContainerCapacityBar from './ContainerCapacityBar'
+import { containerTotals } from './containerMetrics'
 import { CONTAINER_COL } from './allocationColumns'
 
 interface Props {
@@ -79,26 +80,12 @@ export default function ContainerCard({ container }: Props) {
     [allAllocations, container.id],
   )
 
-  const metrics = useMemo(() => {
-    let totalQty = 0
-    let totalCbm = 0
-    let maxCargoReady: string | null = null
-    // Lines planned in here that the ERP has since stopped listing. Counted alongside the other
-    // metrics rather than fetched: the sync already loaded every line, closed ones included, so
-    // this is a property of what is on screen and needs no second round trip.
-    let closedLines = 0
-    for (const a of allocations) {
-      const item = masterItems.find((m) => m.id === a.masterItemId)
-      if (!item) continue
-      totalQty += a.quantity
-      totalCbm += item.cbmPerCase * a.quantity
-      if (item.isClosed) closedLines++
-      if (!maxCargoReady || item.cargoReady > maxCargoReady) {
-        maxCargoReady = item.cargoReady
-      }
-    }
-    return { lines: allocations.length, totalQty, totalCbm, maxCargoReady, closedLines }
-  }, [allocations, masterItems])
+  // One definition, shared with the commit dialog and the export — see containerMetrics.ts.
+  // This was a local loop; the export made three copies of the same arithmetic a liability.
+  const metrics = useMemo(
+    () => containerTotals(container, allocations, masterItems),
+    [container, allocations, masterItems],
+  )
 
   const { setNodeRef, isOver } = useDroppable({
     id: container.id,
@@ -139,7 +126,7 @@ export default function ContainerCard({ container }: Props) {
       ? masterItems.find((m) => m.id === dragged.masterItemId)
       : undefined
     if (!dragged || !draggedItem) return true
-    const projected = metrics.totalCbm + draggedItem.cbmPerCase * dragged.quantity
+    const projected = metrics.cbm + draggedItem.cbmPerCase * dragged.quantity
     return !exceedsCeiling(container.type, projected)
   })()
   const compatibleDrop = destinationMatches && supplierMatches && cbmFits
@@ -251,10 +238,10 @@ export default function ContainerCard({ container }: Props) {
           ) : null}
 
           <div className="space-y-0.5 text-[10px] font-mono uppercase tracking-widest text-navy-500">
-            {metrics.maxCargoReady ? (
-              <div className="truncate">{formatDate(metrics.maxCargoReady)}</div>
+            {metrics.latestCargoReady ? (
+              <div className="truncate">{formatDate(metrics.latestCargoReady)}</div>
             ) : null}
-            <div>{metrics.totalQty} cases</div>
+            <div>{metrics.cases} cases</div>
             {/* Surfaced on the collapsed card as well as inside, because a container someone
                 has not opened this week is exactly the one where this goes unnoticed. */}
             {metrics.closedLines > 0 ? (
@@ -326,7 +313,7 @@ export default function ContainerCard({ container }: Props) {
 
           {/* Fill bar sits at the bottom of the allocated lines, inside the card. */}
           <div className="mt-auto px-2 pt-2">
-            <ContainerCapacityBar container={container} totalCbm={metrics.totalCbm} />
+            <ContainerCapacityBar container={container} totalCbm={metrics.cbm} />
           </div>
         </div>
       </div>

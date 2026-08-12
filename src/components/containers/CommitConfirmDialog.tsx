@@ -4,6 +4,7 @@ import { FileCheck2, X } from 'lucide-react'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
 import { formatDate } from '../../utils/dateHelpers'
+import { containerTotals } from './containerMetrics'
 
 export default function CommitConfirmDialog() {
   const open = usePlannerStore((s) => s.commitDialog.open)
@@ -34,21 +35,16 @@ export default function CommitConfirmDialog() {
     [allocations, containerId],
   )
 
-  const summary = useMemo(() => {
-    let totalQty = 0
-    let totalCbm = 0
-    let maxCargoReady: string | null = null
-    for (const a of containerAllocations) {
-      const item = masterItems.find((m) => m.id === a.masterItemId)
-      if (!item) continue
-      totalQty += a.quantity
-      totalCbm += item.cbmPerCase * a.quantity
-      if (!maxCargoReady || item.cargoReady > maxCargoReady) {
-        maxCargoReady = item.cargoReady
-      }
-    }
-    return { totalQty, totalCbm, maxCargoReady }
-  }, [containerAllocations, masterItems])
+  // Shared with the card and the export (containerMetrics.ts). The dialog is where someone
+  // commits to these numbers, so it must not be able to show a different total from the card
+  // they were just looking at.
+  // The `?? { capacityCbm: null }` is for the hook, not for the UI: hooks run unconditionally and
+  // `container` is still nullable at this point, but the component returns null a few lines below
+  // when it is — so that fallback is never what anyone reads.
+  const summary = useMemo(
+    () => containerTotals(container ?? { capacityCbm: null }, containerAllocations, masterItems),
+    [container, containerAllocations, masterItems],
+  )
 
   const [ofqReference, setOfqReference] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -134,12 +130,12 @@ export default function CommitConfirmDialog() {
 
           <dl className="px-5 py-3 border-t border-navy-100 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
             <dt className="text-navy-500">Total cases</dt>
-            <dd className="text-right font-mono text-navy-900">{summary.totalQty}</dd>
+            <dd className="text-right font-mono text-navy-900">{summary.cases}</dd>
             <dt className="text-navy-500">Total CBM</dt>
-            <dd className="text-right font-mono text-navy-900">{summary.totalCbm.toFixed(2)} m³</dd>
+            <dd className="text-right font-mono text-navy-900">{summary.cbm.toFixed(2)} m³</dd>
             <dt className="text-navy-500">Effective cargo ready</dt>
             <dd className="text-right font-mono text-navy-900">
-              {summary.maxCargoReady ? formatDate(summary.maxCargoReady) : '—'}
+              {summary.latestCargoReady ? formatDate(summary.latestCargoReady) : '—'}
             </dd>
           </dl>
 
