@@ -36,36 +36,57 @@ export const APP_NAME = 'Planner'
 /** Not rendered in the lockup any more; still the module's description, used for titles. */
 export const APP_DESCRIPTOR = 'Container Loading'
 
+const SIZES = {
+  sm: { slot: 'h-9 w-9 rounded-2xl', gap: 'gap-2.5', name: 'text-base', monogram: 'text-[15px]' },
+  lg: { slot: 'h-12 w-12 rounded-[1.15rem]', gap: 'gap-3', name: 'text-3xl', monogram: 'text-xl' },
+} as const
+
+/*
+  Two tones, because the mark lives on two grounds. They are not the same colours dimmed: on light
+  the monogram needs `accent-strong` to clear 4.5:1 against its own wash, and on dark it needs
+  `accent-light`, because the mid green reads too close to an earth ground. Opposite ends of the
+  same ramp.
+*/
+const TONES = {
+  light: { wash: 'bg-amber-accent/8', monogram: 'text-amber-accent-strong', name: 'text-navy-900', dot: 'text-amber-accent' },
+  dark: { wash: 'bg-amber-accent-light/15', monogram: 'text-amber-accent-light', name: 'text-white', dot: 'text-amber-accent-light' },
+} as const
+
 interface Props {
   /** Fills the slot and replaces the monogram. */
   icon?: ReactNode
+  size?: keyof typeof SIZES
+  tone?: keyof typeof TONES
   /** When set, the lockup links home. */
   to?: string
   className?: string
 }
 
-export function BrandMark({ icon = null, to, className = '' }: Props) {
+export function BrandMark({ icon = null, size = 'sm', tone = 'light', to, className = '' }: Props) {
+  const s = SIZES[size]
+  const t = TONES[tone]
+
   const inner = (
     <>
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-amber-accent/8">
+      <span className={`flex shrink-0 items-center justify-center overflow-hidden ${s.slot} ${t.wash}`}>
         {icon ?? (
           <span
             aria-hidden="true"
-            className="font-logo text-[15px] font-medium leading-none text-amber-accent-strong"
+            className={`font-logo font-medium leading-none ${s.monogram} ${t.monogram}`}
           >
             {APP_NAME.charAt(0)}
           </span>
         )}
       </span>
 
-      <span className="font-logo text-base font-medium leading-none tracking-[-0.005em] text-navy-900">
+      <span className={`font-logo font-medium leading-none tracking-[-0.005em] ${s.name} ${t.name}`}>
         {APP_NAME}
-        <span className="text-amber-accent">.</span>
+        <span className={t.dot}>.</span>
       </span>
     </>
   )
 
-  const shell = `flex items-center gap-2.5 overflow-hidden ${className}`
+  const shell = `flex items-center ${s.gap} overflow-hidden ${className}`
 
   if (!to) return <div className={shell}>{inner}</div>
 

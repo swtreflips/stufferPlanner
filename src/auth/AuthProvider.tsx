@@ -9,6 +9,7 @@ import {
 import type { Session } from '@supabase/supabase-js'
 import { configError, supabase } from '../lib/supabase'
 import { profileRepo } from '../data/repos'
+import { BrandMark } from '../components/layout/BrandMark'
 import type { Profile } from '../types/profile'
 
 export type { Role } from '../types/profile'
@@ -91,7 +92,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // reads as a locked account. Misconfiguration comes first — without a URL and key every
   // later gate is guesswork, and "sign in" would fail in a way that looks like a bad password.
   if (configError) return <Misconfigured detail={configError} />
-  if (loading || (session && profile === undefined)) return <Centered>Loading…</Centered>
+  if (loading || (session && profile === undefined)) {
+    return (
+      <Centered>
+        <SweepBar />
+        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--ground-muted)]">
+          Establishing session…
+        </p>
+      </Centered>
+    )
+  }
   if (!session) return <SignIn />
   if (!profile) return <NoAccess email={session.user.email} error={profileError} />
 
@@ -106,11 +116,31 @@ export function useAuth(): AuthContextValue {
 
 /* ── gate screens ──────────────────────────────────────────────────────── */
 
+/**
+ * The gate ground.
+ *
+ * This was a white page with a heading on it. The gate is the first thing anyone sees and the only
+ * screen with nothing to do on it, so it is the one place atmosphere costs nothing and buys the
+ * most. Four layers, all local: a radial ground, a film grain, a faint graph grid, and — while
+ * loading — a sweeping bar.
+ */
 function Centered({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-5 bg-white px-6 text-center">
-      <h1 className="text-xl font-semibold tracking-tight text-slate-900">Planner</h1>
-      {children}
+    <div className="grain ground ground-grid relative flex h-screen flex-col items-center justify-center gap-5 overflow-hidden px-6 text-center text-white">
+      {/* above the grain and grid pseudo-elements */}
+      <div className="relative flex flex-col items-center gap-5">
+        <BrandMark size="lg" tone="dark" />
+        {children}
+      </div>
+    </div>
+  )
+}
+
+/** The sweeping rail. Its own component so every gate state can share one bar. */
+function SweepBar() {
+  return (
+    <div className="relative h-1 w-56 overflow-hidden rounded-full bg-white/10">
+      <div className="absolute h-full w-1/4 rounded-full bg-amber-accent-light animate-sweep" />
     </div>
   )
 }
@@ -141,7 +171,7 @@ function SignIn() {
           placeholder="Email"
           autoComplete="username"
           required
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+          className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none backdrop-blur-sm placeholder:text-white/40 focus:border-amber-accent-light"
         />
         <input
           type="password"
@@ -150,18 +180,18 @@ function SignIn() {
           placeholder="Password"
           autoComplete="current-password"
           required
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+          className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none backdrop-blur-sm placeholder:text-white/40 focus:border-amber-accent-light"
         />
         <button
           type="submit"
           disabled={busy}
-          className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="cursor-pointer rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-white/15 disabled:opacity-50"
         >
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
-        {error && <p className="text-xs text-red-600">{error}</p>}
+        {error && <p className="text-xs text-amber-accent-light">{error}</p>}
       </form>
-      <p className="max-w-xs text-xs text-slate-500">
+      <p className="max-w-xs text-xs text-[var(--ground-muted)]">
         Same credentials as RatesApp. Accounts are created by an administrator — there is no
         self-registration.
       </p>
@@ -172,9 +202,9 @@ function SignIn() {
 function Misconfigured({ detail }: { detail: string }) {
   return (
     <Centered>
-      <p className="text-sm text-slate-700">This build is not configured.</p>
-      <p className="max-w-sm text-xs text-slate-500">{detail}</p>
-      <p className="max-w-sm text-xs text-slate-500">
+      <p className="text-sm text-white/80">This build is not configured.</p>
+      <p className="max-w-sm text-xs text-[var(--ground-muted)]">{detail}</p>
+      <p className="max-w-sm text-xs text-[var(--ground-muted)]">
         Vite inlines these at <strong>build</strong> time. Locally: add them to{' '}
         <code>.env</code> and restart <code>npm run dev</code> — a dev server started before the
         file existed will not have them. On Vercel: set them, then <strong>redeploy</strong>;
@@ -187,21 +217,21 @@ function Misconfigured({ detail }: { detail: string }) {
 function NoAccess({ email, error }: { email?: string; error?: string | null }) {
   return (
     <Centered>
-      <p className="text-sm text-slate-700">
+      <p className="text-sm text-white/80">
         {error
           ? 'Signed in, but your profile could not be loaded.'
           : email
             ? `${email} is signed in, but has no profile in this workspace.`
             : 'No profile.'}
       </p>
-      <p className="max-w-sm text-xs text-slate-500">
+      <p className="max-w-sm text-xs text-[var(--ground-muted)]">
         {error ?? 'Ask an administrator to set one up. Authenticated is not the same as authorised.'}
       </p>
       {/* scope:'local' — this app only; see AccountMenu. The global default would also sign the
           user out of RatesApp and Schedules, which share this Supabase project. */}
       <button
         onClick={() => supabase.auth.signOut({ scope: 'local' })}
-        className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+        className="rounded-md border border-slate-300 px-3 py-2 text-sm text-white/80 hover:bg-slate-50"
       >
         Sign out
       </button>
