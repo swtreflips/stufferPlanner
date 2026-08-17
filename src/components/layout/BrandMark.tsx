@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
 
 /**
  * The app's identity lockup — icon slot and wordmark.
@@ -57,17 +56,28 @@ interface Props {
   icon?: ReactNode
   size?: keyof typeof SIZES
   tone?: keyof typeof TONES
-  /** When set, the lockup links home. */
-  to?: string
   className?: string
 }
 
-export function BrandMark({ icon = null, size = 'sm', tone = 'light', to, className = '' }: Props) {
+/*
+  THE LOCKUP IS A MARK, NOT A CONTROL.
+
+  It used to be a link home. That made it clickable here and in Freight while Schedules — a single
+  screen with no router — stayed plain text, so the cursor told three different stories: a hand in
+  two apps and a text I-beam in the third. A logo only earns a link when there is somewhere to go.
+
+  `select-none` matters as much as the cursor: dragging across a wordmark and highlighting it is
+  the tell that something is text rather than a mark.
+*/
+
+export function BrandMark({ icon = null, size = 'sm', tone = 'light', className = '' }: Props) {
   const s = SIZES[size]
   const t = TONES[tone]
 
-  const inner = (
-    <>
+  return (
+    <div
+      className={`flex cursor-default select-none items-center ${s.gap} overflow-hidden ${className}`}
+    >
       <span className={`flex shrink-0 items-center justify-center overflow-hidden ${s.slot} ${t.wash}`}>
         {icon ?? (
           <span
@@ -83,16 +93,6 @@ export function BrandMark({ icon = null, size = 'sm', tone = 'light', to, classN
         {APP_NAME}
         <span className={t.dot}>.</span>
       </span>
-    </>
-  )
-
-  const shell = `flex items-center ${s.gap} overflow-hidden ${className}`
-
-  if (!to) return <div className={shell}>{inner}</div>
-
-  return (
-    <Link to={to} aria-label={`${APP_NAME} — home`} className={shell}>
-      {inner}
-    </Link>
+    </div>
   )
 }
