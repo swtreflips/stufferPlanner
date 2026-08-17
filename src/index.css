@@ -34,6 +34,15 @@
   --font-sans: 'DM Sans', system-ui, sans-serif;
   --font-mono: 'DM Mono', ui-monospace, monospace;
 
+  /* THE LOGOTYPE FACE, and nothing else in the interface uses it.
+
+     A product name set in the UI face at UI weight reads as a label rather than an identity —
+     which is what this mark did. Fraunces is a soft serif with real SOFT and WONK axes, built to
+     feel hand-cut, and it holds that warmth at 16px.
+
+     Same token name in Freight and Schedules so the lockup stays copy-paste portable. */
+  --font-logo: 'Fraunces', ui-serif, Georgia, serif;
+
   /* dark ink — linen harbor */
   --color-navy-950: #081515;
   --color-navy-900: #112424;
@@ -52,6 +61,11 @@
      it would touch every component, and a skin must never do that — see OS/DESIGN.md. Read it
      as "the accent", not as "amber". 4.58:1 as text on white, 5.19:1 under ink as a fill. */
   --color-amber-accent: #25864a;
+  /* A darker step of the accent, for the logotype monogram only. The monogram sits on an 8% wash
+     of the accent itself, and the accent on its own wash measures 4.13:1 — under the floor for a
+     glyph that identifies the app. This reads 5.90:1 on the same wash. Mirrors Schedules'
+     `accent-strong`. */
+  --color-amber-accent-strong: #1c6b3a;
   /* Success must stay distinguishable FROM the module accent. linen's sea-600 (#3f8259) is
      green, and so is this module's accent — side by side they read as one colour and the
      "saved" flash stops meaning anything. Shifted to a true teal, same lightness curve. */

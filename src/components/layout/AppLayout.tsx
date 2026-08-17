@@ -275,7 +275,7 @@ export default function AppLayout() {
         )}
         <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-navy-200">
           {/* Brand lockup — icon slot stays reserved; see BrandMark */}
-          <BrandMark />
+          <BrandMark to='/' />
           <SupplierFilter />
           {/*
             ONE RULE ACROSS THESE THREE: an action carries chrome, a number does not.
