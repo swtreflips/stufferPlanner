@@ -109,7 +109,7 @@ export function useAuth(): AuthContextValue {
 function Centered({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-5 bg-white px-6 text-center">
-      <h1 className="text-xl font-semibold tracking-tight text-slate-900">Stuffer Planner</h1>
+      <h1 className="text-xl font-semibold tracking-tight text-slate-900">Planner</h1>
       {children}
     </div>
   )

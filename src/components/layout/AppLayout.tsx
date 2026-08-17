@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
+import { BrandMark } from './BrandMark'
 import { Link } from 'react-router-dom'
 import {
   DndContext,
@@ -14,7 +15,6 @@ import {
 import AccountMenu from './AccountMenu'
 import SplitPane from './SplitPane'
 import SupplierFilter from './SupplierFilter'
-import logoUrl from '../../assets/logo.png'
 import { masterLockId } from '../../types/lock'
 import { useAuth } from '../../auth/AuthProvider'
 import { usePlannerStore } from '../../store/plannerStore'
@@ -274,11 +274,8 @@ export default function AppLayout() {
           </div>
         )}
         <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-navy-200">
-          <img
-            src={logoUrl}
-            alt="Prime Time Packaging"
-            className="h-11 w-auto"
-          />
+          {/* Brand lockup — icon slot stays reserved; see BrandMark */}
+          <BrandMark />
           <SupplierFilter />
           {/*
             ONE RULE ACROSS THESE THREE: an action carries chrome, a number does not.
