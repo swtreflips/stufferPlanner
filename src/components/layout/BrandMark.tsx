@@ -35,9 +35,19 @@ export const APP_NAME = 'Planner'
 /** Not rendered in the lockup any more; still the module's description, used for titles. */
 export const APP_DESCRIPTOR = 'Container Loading'
 
+/*
+  THE AGREED SLOT SIZE — 51.84px in chrome, 69.12px on the gate screens.
+
+  Settled in Freight by two 20% steps from the original 36 / 48, then copied here and into
+  Schedules so the mark stays pinned when you switch tabs. The 64px brand bar is the ceiling:
+  51.84 leaves 6.1px above and below, and a further step would fill the bar edge to edge.
+
+  The radius and the monogram both scale with the box — holding either fixed while the square grows
+  reads as a shape change rather than a size change.
+*/
 const SIZES = {
-  sm: { slot: 'h-9 w-9 rounded-2xl', gap: 'gap-2.5', name: 'text-base', monogram: 'text-[15px]' },
-  lg: { slot: 'h-12 w-12 rounded-[1.15rem]', gap: 'gap-3', name: 'text-3xl', monogram: 'text-xl' },
+  sm: { slot: 'h-[3.24rem] w-[3.24rem] rounded-[1.44rem]', gap: 'gap-2.5', name: 'text-base', monogram: 'text-[1.35rem]' },
+  lg: { slot: 'h-[4.32rem] w-[4.32rem] rounded-[1.66rem]', gap: 'gap-3', name: 'text-3xl', monogram: 'text-[1.8rem]' },
 } as const
 
 /*
